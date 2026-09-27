@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #1d2927;
+        --muted: #687571;
+        --paper: #f4f5ef;
+        --surface: #fff;
+        --line: #dce2db;
+        --green: #175e55;
+        --green-dark: #104941;
+        --mint: #e3f0e9;
+        --amber: #84500b;
+        --amber-bg: #fbf1d8;
+        --red: #9d3429;
+        --red-bg: #f8e8e5;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: linear-gradient(135deg, #f4f5ef, #edf3ed 55%, #f5f0e5); color: var(--ink); font: 16px/1.5 Georgia, 'Times New Roman', serif; }
+      button, input, textarea { font: inherit; }
+      button { cursor: pointer; }
+      .shell { width: min(100% - 32px, 760px); margin: 0 auto; padding: 30px 0 56px; }
+      .masthead { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; color: var(--green-dark); }
+      .mark { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #a8c2b4; border-radius: 50%; font: 700 16px/1 Arial, sans-serif; }
+      .brand { font: 700 12px/1.2 Arial, sans-serif; letter-spacing: 1.1px; text-transform: uppercase; }
+      .panel { padding: clamp(22px, 5vw, 42px); border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.94); box-shadow: 0 14px 36px rgba(29,41,39,.06); animation: arrive .35s ease-out both; }
+      h1 { margin: 0 0 8px; font-size: clamp(27px, 5vw, 38px); font-weight: 500; line-height: 1.12; }
+      .intro { margin: 0 0 28px; color: var(--muted); }
+      h2 { margin: 0; font-size: 20px; font-weight: 500; }
+      label { display: block; margin: 0 0 7px; font: 700 12px/1.3 Arial, sans-serif; letter-spacing: .25px; }
+      input, textarea { width: 100%; padding: 11px 12px; border: 1px solid #cbd5ce; border-radius: 3px; background: #fff; color: var(--ink); }
+      input:focus, textarea:focus { outline: 2px solid #79a99a; outline-offset: 1px; }
+      input[readonly] { background: #f4f6f3; color: #53605b; }
+      textarea { min-height: 96px; resize: vertical; }
+      .field { margin-bottom: 18px; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+      .employee-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; padding: 16px; margin-bottom: 24px; border-left: 3px solid var(--green); background: #f2f6f2; }
+      .employee-item span { display: block; color: var(--muted); font: 700 10px/1.3 Arial, sans-serif; letter-spacing: .5px; text-transform: uppercase; }
+      .employee-item strong { display: block; margin-top: 3px; font: 15px/1.35 Arial, sans-serif; overflow-wrap: anywhere; }
+      .rate { padding: 14px 16px; margin: -1px 0 20px; border-radius: 3px; background: var(--mint); color: var(--green-dark); font: 14px/1.5 Arial, sans-serif; }
+      .rate.warning { background: var(--amber-bg); color: var(--amber); }
+      .rate.error { background: var(--red-bg); color: var(--red); }
+      .button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; padding: 10px 19px; border: 0; border-radius: 3px; background: var(--green); color: #fff; font: 700 13px/1.2 Arial, sans-serif; }
+      .button:hover { background: var(--green-dark); }
+      .button:disabled { cursor: wait; opacity: .58; }
+      .button.secondary { border: 1px solid #cbd5ce; background: #fff; color: var(--ink); }
+      .button.secondary:hover { background: #f2f6f2; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+      .message { display: none; padding: 12px 14px; margin: 0 0 18px; border-radius: 3px; font: 14px/1.45 Arial, sans-serif; }
+      .message.show { display: block; }
+      .message.error { background: var(--red-bg); color: var(--red); }
+      .message.success { background: var(--mint); color: var(--green-dark); }
+      .subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 18px; }
+      .quiet { color: var(--muted); font: 12px/1.4 Arial, sans-serif; }
+      .hidden { display: none !important; }
+      .amount { font-variant-numeric: tabular-nums; }
+      @keyframes arrive { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+      @media (max-width: 540px) {
+        .shell { width: min(100% - 22px, 760px); padding-top: 18px; }
+        .grid, .employee-strip { grid-template-columns: 1fr; }
+        .panel { padding: 22px 18px; }
+        .subhead { align-items: flex-start; flex-direction: column; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; } }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="masthead"><div class="mark" aria-hidden="true">I</div><div class="brand">Indorama · Employee Services</div></div>
+      <section id="loginPanel" class="panel hidden">
+        <h1>Airtime &amp; data claim</h1>
+        <p class="intro">Sign in with your company email.</p>
+        <div id="loginMessage" class="message" role="status"></div>
+        <form id="loginForm">
+          <div class="field"><label for="loginEmail">Company email</label><input id="loginEmail" name="email" type="email" autocomplete="email" pattern="[^@\s]+@indorama\.com" title="Use your @indorama.com email address" required></div>
+          <button id="requestCodeButton" class="button" type="button">Email me a sign-in code</button>
+          <div id="loginCodeField" class="field hidden" style="margin-top:18px">
+            <label for="loginCode">Six-digit sign-in code</label>
+            <input id="loginCode" name="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000">
+          </div>
+          <button id="verifyCodeButton" class="button hidden" type="submit" disabled>Verify code</button>
+        </form>
+      </section>
+
+      <section id="claimPanel" class="panel hidden">
+        <div class="subhead"><div><h1>New expense claim</h1><p class="intro" style="margin:6px 0 0">Airtime and mobile data</p></div><button id="logoutButton" type="button" class="button secondary">Sign out</button></div>
+        <div id="claimMessage" class="message" role="status"></div>
+        <div id="employeeDetails" class="employee-strip"></div>
+        <form id="claimForm">
+          <div class="field"><label for="period">Claim period</label><input id="period" name="period" type="month" required></div>
+          <div class="grid">
+            <div class="field"><label for="airtime">Airtime claimed (NGN)</label><input id="airtime" name="airtime" type="number" min="0" step="0.01" inputmode="decimal" value="0" required></div>
+            <div class="field"><label for="data">Data claimed (NGN)</label><input id="data" name="data" type="number" min="0" step="0.01" inputmode="decimal" value="0" required></div>
+          </div>
+          <div id="eligibility" class="rate hidden" aria-live="polite"></div>
+          <div class="field"><label for="justification">Justification</label><textarea id="justification" name="justification" maxlength="1000" required></textarea></div>
+          <button id="submitClaim" class="button" type="submit" disabled>Submit claim</button>
+        </form>
+      </section>
+
+      <section id="decisionPanel" class="panel hidden">
+        <h1 id="decisionTitle">Claim decision</h1>
+        <p id="decisionIntro" class="intro">Review the claim details before recording your decision.</p>
+        <div id="decisionMessage" class="message" role="status"></div>
+        <div id="decisionDetails" class="employee-strip"></div>
+        <div class="field"><label for="comment">Comment <span class="quiet">(optional)</span></label><textarea id="comment" maxlength="1000"></textarea></div>
+        <div class="actions"><button id="decisionButton" class="button" type="button"></button><button id="cancelDecision" class="button secondary" type="button">Cancel</button></div>
+      </section>
+    </main>
+    <script>
+      const INITIAL_DECISION = <?!= initialDecision ?>;
+      const SESSION_KEY = 'airtimeClaimSession';
+      let session = null;
+      let eligibilityReady = false;
+      let decision = null;
+
+      function callServer(method, ...args) {
+        return new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(result => {
+              if (result == null) {
+                reject(new Error('The server returned no decision result. Check the Claims Tracker before retrying; the decision may already have been recorded. Then deploy the latest Apps Script version and reopen the email link.'));
+                return;
+              }
+              resolve(result);
+            })
+            .withFailureHandler(error => reject(new Error(error.message || 'Request failed.')))[method](...args);
+        });
+      }
+
+      function showMessage(element, text, kind) {
+        element.textContent = text;
+        element.className = 'message show ' + kind;
+      }
+
+      function setBusy(button, busy, text) {
+        button.disabled = busy;
+        if (text) button.textContent = busy ? 'Please wait…' : text;
+      }
+
+      function money(value) {
+        if (typeof value === 'string') return value;
+        return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(value || 0));
+      }
+
+      function addDetail(container, label, value) {
+        const item = document.createElement('div');
+        item.className = 'employee-item';
+        const heading = document.createElement('span');
+        heading.textContent = label;
+        const content = document.createElement('strong');
+        content.textContent = value == null || value === '' ? 'Not recorded' : value;
+        item.append(heading, content);
+        container.append(item);
+      }
+
+      function renderEmployee(employee) {
+        const container = document.getElementById('employeeDetails');
+        container.replaceChildren();
+        addDetail(container, 'Employee', employee.name + ' · ' + employee.employeeId);
+        addDetail(container, 'Department', employee.department);
+        addDetail(container, 'Grade / designation', employee.grade + ' · ' + employee.designation);
+        addDetail(container, 'Reporting supervisor', employee.supervisor);
+      }
+
+      function showLogin() {
+        document.getElementById('loginPanel').classList.remove('hidden');
+        document.getElementById('claimPanel').classList.add('hidden');
+      }
+
+      function showClaim() {
+        document.getElementById('loginPanel').classList.add('hidden');
+        document.getElementById('claimPanel').classList.remove('hidden');
+        renderEmployee(session.employee);
+        const now = new Date();
+        document.getElementById('period').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        refreshEligibility();
+      }
+
+      async function refreshEligibility() {
+        eligibilityReady = false;
+        document.getElementById('submitClaim').disabled = true;
+        const box = document.getElementById('eligibility');
+        const airtime = document.getElementById('airtime').value;
+        const data = document.getElementById('data').value;
+        if (airtime === '' || data === '' || Number(airtime) < 0 || Number(data) < 0) {
+          box.className = 'rate error';
+          box.textContent = 'Enter non-negative amounts to check the approved rate.';
+          return;
+        }
+        box.className = 'rate';
+        box.textContent = 'Checking approved rate…';
+        try {
+          const result = await callServer('getEligibility', session.token, airtime, data);
+          const rate = result.eligibility;
+          box.className = 'rate' + (rate.needsManualReview ? ' warning' : (rate.eligible === false ? ' error' : ''));
+          box.textContent = rate.needsManualReview
+            ? rate.message + ' Total claimed: ' + money(rate.total) + '.'
+            : 'Airtime cap: ' + money(rate.airtimeLimit) + '; claimed: ' + money(airtime) + '. Data cap: ' + money(rate.dataLimit) + '; claimed: ' + money(data) + '. ' + rate.message;
+          eligibilityReady = rate.configured && (rate.needsManualReview || rate.eligible !== false);
+          document.getElementById('submitClaim').disabled = !eligibilityReady;
+        } catch (error) {
+          box.className = 'rate error';
+          box.textContent = error.message;
+        }
+      }
+
+      async function loadDecision() {
+        document.getElementById('decisionPanel').classList.remove('hidden');
+        document.getElementById('loginPanel').classList.add('hidden');
+        document.getElementById('claimPanel').classList.add('hidden');
+        try {
+          decision = await callServer('getDecisionInfo', INITIAL_DECISION.token, INITIAL_DECISION.action);
+          if (decision.alreadyActioned) {
+            showMessage(document.getElementById('decisionMessage'), 'This claim has already been actioned. No changes were made.', 'success');
+            document.getElementById('decisionIntro').classList.add('hidden');
+            document.getElementById('decisionDetails').classList.add('hidden');
+            document.getElementById('comment').parentElement.classList.add('hidden');
+            document.querySelector('#decisionPanel .actions').classList.add('hidden');
+            return;
+          }
+          const claim = decision.claim;
+          const details = document.getElementById('decisionDetails');
+          details.replaceChildren();
+          addDetail(details, 'Employee', claim.employeeName + ' · ' + claim.employeeId);
+          addDetail(details, 'Department / grade', claim.department + ' · ' + claim.grade);
+          addDetail(details, 'Claim period', claim.period);
+          addDetail(details, 'Airtime / data', money(claim.airtime) + ' / ' + money(claim.data));
+          addDetail(details, 'Total claimed', money(claim.total));
+          addDetail(details, claim.manualReview ? 'Rate review' : 'Approved limit', claim.manualReview ? 'Needs Manual Review' : money(claim.approvedLimit));
+          addDetail(details, 'Recommended amount', money(claim.recommended));
+          addDetail(details, 'Justification', claim.justification);
+          document.getElementById('decisionTitle').textContent = decision.stage === 'supervisor' ? 'Supervisor decision' : 'HR verification';
+          document.getElementById('decisionButton').textContent = ({ approve: 'Approve claim', decline: 'Decline claim', verify: 'Verify claim', reject: 'Reject claim' })[decision.action];
+        } catch (error) {
+          showMessage(document.getElementById('decisionMessage'), error.message, 'error');
+          document.getElementById('decisionIntro').classList.add('hidden');
+          document.getElementById('decisionDetails').classList.add('hidden');
+          document.getElementById('comment').parentElement.classList.add('hidden');
+          document.querySelector('#decisionPanel .actions').classList.add('hidden');
+        }
+      }
+
+      document.getElementById('requestCodeButton').addEventListener('click', async event => {
+        const button = event.currentTarget;
+        const email = document.getElementById('loginEmail').value.trim();
+        if (!document.getElementById('loginEmail').reportValidity()) return;
+        setBusy(button, true, 'Email me a sign-in code');
+        try {
+          const result = await callServer('sendLoginCode', email);
+          document.getElementById('loginCodeField').classList.remove('hidden');
+          document.getElementById('loginCode').required = true;
+          document.getElementById('verifyCodeButton').classList.remove('hidden');
+          document.getElementById('verifyCodeButton').disabled = false;
+          showMessage(document.getElementById('loginMessage'), result.message, 'success');
+        } catch (error) {
+          showMessage(document.getElementById('loginMessage'), error.message, 'error');
+        } finally {
+          setBusy(button, false, 'Email me a sign-in code');
+        }
+      });
+
+      document.getElementById('loginEmail').addEventListener('input', () => {
+        document.getElementById('loginCodeField').classList.add('hidden');
+        document.getElementById('loginCode').required = false;
+        document.getElementById('loginCode').value = '';
+        document.getElementById('verifyCodeButton').classList.add('hidden');
+        document.getElementById('verifyCodeButton').disabled = true;
+      });
+
+      document.getElementById('loginForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const button = document.getElementById('verifyCodeButton');
+        setBusy(button, true, 'Verify code');
+        try {
+          session = await callServer('verifyLoginCode', document.getElementById('loginEmail').value, document.getElementById('loginCode').value);
+          showClaim();
+        } catch (error) {
+          showMessage(document.getElementById('loginMessage'), error.message, 'error');
+        } finally {
+          setBusy(button, false, 'Verify code');
+        }
+      });
+
+      ['airtime', 'data'].forEach(id => document.getElementById(id).addEventListener('input', refreshEligibility));
+
+      document.getElementById('claimForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!eligibilityReady) return;
+        const button = document.getElementById('submitClaim');
+        setBusy(button, true, 'Submit claim');
+        try {
+          const result = await callServer('submitClaim', session.token, {
+            period: document.getElementById('period').value,
+            airtime: document.getElementById('airtime').value,
+            data: document.getElementById('data').value,
+            justification: document.getElementById('justification').value
+          });
+          setBusy(button, false, 'Submit claim');
+          showMessage(document.getElementById('claimMessage'), result.notificationSent
+            ? 'Claim ' + result.claimId + ' submitted. Your supervisor has been notified.'
+            : 'Claim ' + result.claimId + ' was saved, but an email could not be delivered. Contact Admin/HR.', result.notificationSent ? 'success' : 'error');
+          document.getElementById('claimForm').reset();
+          showClaim();
+        } catch (error) {
+          showMessage(document.getElementById('claimMessage'), error.message, 'error');
+          setBusy(button, false, 'Submit claim');
+          button.disabled = !eligibilityReady;
+        }
+      });
+
+      document.getElementById('logoutButton').addEventListener('click', () => {
+        session = null;
+        document.getElementById('claimForm').reset();
+        showLogin();
+      });
+
+      document.getElementById('decisionButton').addEventListener('click', async () => {
+        const button = document.getElementById('decisionButton');
+        setBusy(button, true, 'Submit decision');
+        try {
+          const result = await callServer('submitDecision', INITIAL_DECISION.token, decision.action, document.getElementById('comment').value);
+          showMessage(document.getElementById('decisionMessage'), result.alreadyActioned
+            ? 'This claim was already actioned. No changes were made.'
+            : 'Decision recorded: ' + result.status + '.' + (result.notificationSent ? '' : ' An email could not be delivered; contact Admin/HR.'), result.notificationSent === false ? 'error' : 'success');
+          document.querySelector('#decisionPanel .actions').classList.add('hidden');
+        } catch (error) {
+          showMessage(document.getElementById('decisionMessage'), error.message, 'error');
+          setBusy(button, false, ({ approve: 'Approve claim', decline: 'Decline claim', verify: 'Verify claim', reject: 'Reject claim' })[decision.action]);
+        }
+      });
+
+      document.getElementById('cancelDecision').addEventListener('click', () => {
+        document.getElementById('decisionPanel').classList.add('hidden');
+        document.getElementById('loginPanel').classList.remove('hidden');
+      });
+
+      if (INITIAL_DECISION.token) {
+        loadDecision();
+      } else {
+        showLogin();
+      }
+    </script>
+  </body>
+</html>
