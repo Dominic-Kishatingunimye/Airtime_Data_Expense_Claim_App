@@ -13,7 +13,8 @@ const HEADERS = {
     'Claim Period', 'Airtime Claimed (NGN)', 'Data Claimed (NGN)', 'Total Claimed (NGN)', 'Approved Limit (NGN)',
     'Excess Claimed (NGN)', 'Amount Recommended (NGN)', 'Justification', 'Needs Manual Review', 'HOD Name', 'HOD Email',
     'HOD Status', 'HOD Comment', 'HOD Decision Timestamp', 'HOD Token Hash', 'HOD Token Used', 'HR Status', 'HR Comment',
-    'HR Decision Timestamp', 'HR Token Hash', 'HR Token Used', 'Finance Status', 'Payment Date', 'Overall Status', 'Remarks'
+    'HR Decision Timestamp', 'HR Token Hash', 'HR Token Used', 'Finance Status', 'Payment Date', 'Overall Status', 'Remarks',
+    'Submitted By Employee ID', 'Submitted By Name', 'Submitted By Email'
   ],
   config: ['Key', 'Value']
 };
@@ -42,37 +43,40 @@ function setupApplication() {
   Object.keys(HEADERS).forEach(function (key) {
     ensureSheet_(spreadsheet, SHEETS[key], HEADERS[key]);
   });
+  ensureHeaders_(spreadsheet.getSheetByName(SHEETS.claims), HEADERS.claims);
   removeLegacyPasswordColumn_(spreadsheet.getSheetByName(SHEETS.employees));
   seedConfig_(spreadsheet.getSheetByName(SHEETS.config));
   installFinancePaymentTrigger_();
   return 'Sheets are ready. Add employees, grade rates, and HR_EMAIL in the workbook before opening submissions.';
 }
 
-function sendLoginCode(email) {
-  const normalizedEmail = normalizeEmail_(email);
-  if (!isCompanyEmail_(normalizedEmail)) throw new Error('Use your company email ending in @indorama.com.');
+function sendLoginCode(employeeId) {
+  const normalizedId = normalizeEmployeeId_(employeeId);
+  if (!normalizedId) throw new Error('Enter your Employee ID.');
 
-  const employee = findActiveEmployeeByEmail_(normalizedEmail);
-  const response = { message: 'If this is an active employee email, a sign-in code has been sent.' };
+  const employee = findActiveEmployeeById_(normalizedId);
+  const response = { message: 'If this Employee ID is active, a sign-in code has been sent to the company email on file.' };
   if (!employee) return response;
+  const recipient = normalizeEmail_(employee.Email);
+  if (!isCompanyEmail_(recipient)) throw new Error('Your company email is missing or invalid in Employee Master. Contact Admin/HR.');
 
   const cache = CacheService.getScriptCache();
-  const emailKey = hashText_(normalizedEmail);
-  const cooldownKey = 'login-cooldown:' + emailKey;
+  const employeeKey = hashText_(normalizedId);
+  const cooldownKey = 'login-cooldown:' + employeeKey;
   if (cache.get(cooldownKey)) throw new Error('A sign-in code was requested recently. Wait one minute before requesting another.');
 
   let code = '';
   while (code.length < 6) code += Utilities.getUuid().replace(/\D/g, '');
   code = code.slice(0, 6);
-  const codeKey = 'login-code:' + emailKey;
-  cache.put(cooldownKey, '1', 60);
+  const codeKey = 'login-code:' + employeeKey;
   try {
+    cache.put(codeKey, JSON.stringify({ codeHash: hashText_(code), attempts: 0 }), LOGIN_CODE_TTL_SECONDS);
+    cache.put(cooldownKey, '1', 60);
     MailApp.sendEmail({
-      to: normalizedEmail,
+      to: recipient,
       subject: 'Your Airtime & Data Claim sign-in code',
       body: 'Your sign-in code is ' + code + '. It expires in five minutes. If you did not request it, you can ignore this email.'
     });
-    cache.put(codeKey, JSON.stringify({ codeHash: hashText_(code), attempts: 0 }), LOGIN_CODE_TTL_SECONDS);
   } catch (error) {
     cache.remove(cooldownKey);
     cache.remove(codeKey);
@@ -82,14 +86,14 @@ function sendLoginCode(email) {
   return response;
 }
 
-function verifyLoginCode(email, verificationCode) {
-  const normalizedEmail = normalizeEmail_(email);
+function verifyLoginCode(employeeId, verificationCode) {
+  const normalizedId = normalizeEmployeeId_(employeeId);
   const code = String(verificationCode || '').trim();
-  if (!isCompanyEmail_(normalizedEmail)) throw new Error('Use your company email ending in @indorama.com.');
+  if (!normalizedId) throw new Error('Enter your Employee ID.');
   if (!/^\d{6}$/.test(code)) throw new Error('Enter the six-digit code sent to your company email.');
 
   const cache = CacheService.getScriptCache();
-  const codeKey = 'login-code:' + hashText_(normalizedEmail);
+  const codeKey = 'login-code:' + hashText_(normalizedId);
   const lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
@@ -110,30 +114,44 @@ function verifyLoginCode(email, verificationCode) {
     lock.releaseLock();
   }
 
-  const employee = findActiveEmployeeByEmail_(normalizedEmail);
+  const employee = findActiveEmployeeById_(normalizedId);
   if (!employee) throw new Error('This employee account is unavailable. Contact Admin/HR.');
   const sessionToken = Utilities.getUuid();
-  CacheService.getScriptCache().put('session:' + hashText_(sessionToken), String(employee['Employee ID']).trim().toUpperCase(), SESSION_TTL_SECONDS);
+  CacheService.getScriptCache().put('session:' + hashText_(sessionToken), normalizedId, SESSION_TTL_SECONDS);
   return { token: sessionToken, employee: publicEmployee_(employee) };
 }
 
-function getEligibility(sessionToken, airtime, data) {
-  const employee = requireEmployee_(sessionToken);
+function getManagedEmployees(sessionToken) {
+  const manager = requireEmployee_(sessionToken);
+  const managerEmail = normalizeEmail_(manager.Email);
+  if (!isCompanyEmail_(managerEmail)) return [];
+  return readTable_(SHEETS.employees).rows.filter(function (row) {
+    return String(row.Active || '').trim().toUpperCase() === 'Y' &&
+      normalizeEmail_(row['Supervisor Email']) === managerEmail &&
+      normalizeEmployeeId_(row['Employee ID']) !== normalizeEmployeeId_(manager['Employee ID']);
+  }).map(publicEmployee_);
+}
+
+function getEligibility(sessionToken, airtime, data, targetEmployeeId) {
+  const context = resolveClaimEmployee_(sessionToken, targetEmployeeId);
   const amounts = validateAmounts_(airtime, data);
-  const result = eligibilityFor_(employee, amounts.airtime, amounts.data);
-  return { employee: publicEmployee_(employee), eligibility: result };
+  const result = eligibilityFor_(context.employee, amounts.airtime, amounts.data);
+  return { employee: publicEmployee_(context.employee), eligibility: result };
 }
 
 function submitClaim(sessionToken, claim) {
-  const employee = requireEmployee_(sessionToken);
   const request = claim || {};
+  const context = resolveClaimEmployee_(sessionToken, request.employeeId);
+  const submitter = context.submitter;
+  const employee = context.employee;
+  const onBehalf = context.onBehalf;
   const amounts = validateAmounts_(request.airtime, request.data);
   const period = String(request.period || '').trim();
   const justification = String(request.justification || '').trim();
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Select a valid claim period.');
   if (!justification || justification.length > 1000) throw new Error('Add a justification (maximum 1,000 characters).');
-  if (!isEmail_(employee.Email)) throw new Error('Your employee email is missing or invalid. Contact Admin/HR; this claim has not been submitted.');
-  if (!employee['Supervisor Email'] || !isEmail_(employee['Supervisor Email'])) {
+  if (!isCompanyEmail_(employee.Email)) throw new Error('The employee company email is missing or invalid. Contact Admin/HR; this claim has not been submitted.');
+  if (!onBehalf && (!employee['Supervisor Email'] || !isEmail_(employee['Supervisor Email']))) {
     throw new Error('Your reporting supervisor is not mapped. Contact Admin/HR; this claim has not been submitted.');
   }
 
@@ -148,6 +166,7 @@ function submitClaim(sessionToken, claim) {
   lock.waitLock(30000);
   let claimRecord;
   let hodToken;
+  let hrToken;
   try {
     const table = readTable_(SHEETS.claims);
     const duplicate = table.rows.some(function (row) {
@@ -157,7 +176,8 @@ function submitClaim(sessionToken, claim) {
     if (duplicate) throw new Error('An active claim already exists for this period.');
 
     const total = amounts.airtime + amounts.data;
-    hodToken = Utilities.getUuid();
+    if (onBehalf) hrToken = Utilities.getUuid();
+    else hodToken = Utilities.getUuid();
     claimRecord = {
       'Claim ID': Utilities.getUuid(),
       'S/N': Math.max(0, table.sheet.getLastRow() - 1) + 1,
@@ -179,26 +199,52 @@ function submitClaim(sessionToken, claim) {
       'Needs Manual Review': eligibility.needsManualReview ? 'Y' : 'N',
       'HOD Name': employee['Supervisor Name'],
       'HOD Email': employee['Supervisor Email'],
-      'HOD Status': 'Pending',
-      'HOD Token Hash': hashText_(hodToken),
-      'HR Status': '',
+      'HOD Status': onBehalf ? 'Bypassed - Manager submitted on behalf' : 'Pending',
+      'HOD Token Hash': hodToken ? hashText_(hodToken) : '',
+      'HR Status': onBehalf ? 'Pending' : '',
+      'HR Token Hash': hrToken ? hashText_(hrToken) : '',
       'Finance Status': 'Pending',
-      'Overall Status': 'Pending Supervisor'
+      'Overall Status': onBehalf ? 'Pending HR' : 'Pending Supervisor',
+      'Submitted By Employee ID': submitter['Employee ID'],
+      'Submitted By Name': submitter['Full Name'],
+      'Submitted By Email': submitter.Email
     };
     table.sheet.appendRow(table.headers.map(function (header) { return claimRecord[header] === undefined ? '' : claimRecord[header]; }));
   } finally {
     lock.releaseLock();
   }
 
-  const supervisorNotified = trySendDecisionEmail_(claimRecord, 'supervisor', hodToken, webAppUrl);
-  const employeeNotified = sendEmployeeEmail_(claimRecord['Employee Email'], 'Claim submitted', supervisorNotified
-    ? 'Your claim ' + claimRecord['Claim ID'] + ' was submitted and sent to your supervisor.'
-    : 'Your claim ' + claimRecord['Claim ID'] + ' was saved, but the supervisor notification could not be sent. Contact Admin/HR.');
+  const decisionNotified = onBehalf
+    ? trySendDecisionEmail_(claimRecord, 'hr', hrToken, webAppUrl)
+    : trySendDecisionEmail_(claimRecord, 'supervisor', hodToken, webAppUrl);
+  const employeeNotified = sendEmployeeEmail_(claimRecord['Employee Email'], 'Claim submitted', decisionNotified
+    ? 'A claim for you (' + claimRecord['Claim ID'] + ') was submitted ' + (onBehalf ? 'by your manager and sent directly to HR.' : 'and sent to your supervisor.')
+    : 'Your claim ' + claimRecord['Claim ID'] + ' was saved, but the approval notification could not be sent. Contact Admin/HR.');
   if (!employeeNotified) recordNotificationFailure_(claimRecord['Claim ID'], claimRecord['Employee Email'], 'Employee submission notification could not be delivered.');
+  let submitterNotified = true;
+  if (onBehalf) {
+    submitterNotified = sendEmployeeEmail_(submitter.Email, 'Claim submitted on behalf', 'Claim ' + claimRecord['Claim ID'] + ' for ' + employee['Full Name'] + ' was ' + (decisionNotified ? 'sent directly to HR.' : 'saved, but the HR notification could not be sent. Contact Admin/HR.'));
+    if (!submitterNotified) recordNotificationFailure_(claimRecord['Claim ID'], submitter.Email, 'Manager submission notification could not be delivered.');
+  }
   return {
     claimId: claimRecord['Claim ID'], status: claimRecord['Overall Status'], needsManualReview: eligibility.needsManualReview,
-    notificationSent: supervisorNotified && employeeNotified
+    notificationSent: decisionNotified && employeeNotified && submitterNotified,
+    onBehalf: onBehalf,
+    employeeName: employee['Full Name']
   };
+}
+
+function resolveClaimEmployee_(sessionToken, targetEmployeeId) {
+  const submitter = requireEmployee_(sessionToken);
+  const requestedId = normalizeEmployeeId_(targetEmployeeId);
+  const submitterId = normalizeEmployeeId_(submitter['Employee ID']);
+  if (!requestedId || requestedId === submitterId) return { submitter: submitter, employee: submitter, onBehalf: false };
+
+  const employee = findActiveEmployeeById_(requestedId);
+  if (!employee || normalizeEmail_(employee['Supervisor Email']) !== normalizeEmail_(submitter.Email)) {
+    throw new Error('You may submit claims only for active employees who report directly to you.');
+  }
+  return { submitter: submitter, employee: employee, onBehalf: true };
 }
 
 function getDecisionInfo(token, action) {
@@ -396,7 +442,8 @@ function decisionSummary_(row) {
     claimId: row['Claim ID'], employeeName: row['Employee Name'], employeeId: row['Employee ID'],
     department: row.Department, grade: row.Grade, period: row['Claim Period'], airtime: row['Airtime Claimed (NGN)'],
     data: row['Data Claimed (NGN)'], total: row['Total Claimed (NGN)'], approvedLimit: row['Approved Limit (NGN)'],
-    recommended: row['Amount Recommended (NGN)'], manualReview: row['Needs Manual Review'] === 'Y', justification: row.Justification
+    recommended: row['Amount Recommended (NGN)'], manualReview: row['Needs Manual Review'] === 'Y', justification: row.Justification,
+    submittedByEmployeeId: row['Submitted By Employee ID'], submittedByName: row['Submitted By Name'], submittedByEmail: row['Submitted By Email']
   };
 }
 
@@ -416,6 +463,9 @@ function sendDecisionEmail_(claim, stage, token, webAppUrl) {
     '<b>Airtime / data:</b> ' + money_(summary.airtime) + ' / ' + money_(summary.data) + '<br>' +
     '<b>Total:</b> ' + money_(summary.total) + '<br>' +
     '<b>Recommended:</b> ' + money_(summary.recommended) + (summary.manualReview ? ' (manual review)' : '') + '<br>' +
+    (summary.submittedByEmployeeId && normalizeEmployeeId_(summary.submittedByEmployeeId) !== normalizeEmployeeId_(summary.employeeId)
+      ? '<b>Submitted by manager:</b> ' + escapeHtml_(summary.submittedByName) + ' (' + escapeHtml_(summary.submittedByEmployeeId) + ')<br>'
+      : '') +
     '<b>Justification:</b> ' + escapeHtml_(summary.justification) + '</p>' +
     '<p>' + links + '</p><p>The link opens a confirmation page where you can add an optional comment.</p>';
   MailApp.sendEmail({ to: recipient, subject: 'Claim ' + claim['Claim ID'] + ' requires ' + (isSupervisor ? 'supervisor action' : 'HR verification'), htmlBody: body });
@@ -503,6 +553,15 @@ function ensureSheet_(spreadsheet, name, headers) {
   }
 }
 
+function ensureHeaders_(sheet, headers) {
+  if (!sheet || sheet.getLastRow() === 0) return;
+  const currentHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+  const missingHeaders = headers.filter(function (header) { return currentHeaders.indexOf(header) < 0; });
+  if (missingHeaders.length) {
+    sheet.getRange(1, currentHeaders.length + 1, 1, missingHeaders.length).setValues([missingHeaders]);
+  }
+}
+
 function removeLegacyPasswordColumn_(sheet) {
   if (!sheet || sheet.getLastColumn() === 0) return;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -533,10 +592,10 @@ function publicEmployee_(employee) {
   };
 }
 
-function findActiveEmployeeByEmail_(email) {
+function findActiveEmployeeById_(employeeId) {
   const table = readTable_(SHEETS.employees);
   return table.rows.find(function (row) {
-    return normalizeEmail_(row.Email) === email && String(row.Active || '').trim().toUpperCase() === 'Y';
+    return normalizeEmployeeId_(row['Employee ID']) === employeeId && String(row.Active || '').trim().toUpperCase() === 'Y';
   }) || null;
 }
 
@@ -562,6 +621,10 @@ function isEmail_(value) {
 
 function normalizeEmail_(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function normalizeEmployeeId_(value) {
+  return String(value || '').trim().toUpperCase();
 }
 
 function isCompanyEmail_(email) {
