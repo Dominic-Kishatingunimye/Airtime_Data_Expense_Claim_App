@@ -124,7 +124,7 @@ function verifyLoginCode(employeeId, verificationCode) {
 function getManagedEmployees(sessionToken) {
   const manager = requireEmployee_(sessionToken);
   const managerEmail = normalizeEmail_(manager.Email);
-  if (!isCompanyEmail_(managerEmail)) return [];
+  if (!isManager_(manager) || !isCompanyEmail_(managerEmail)) return [];
   return readTable_(SHEETS.employees).rows.filter(function (row) {
     return String(row.Active || '').trim().toUpperCase() === 'Y' &&
       normalizeEmail_(row['Supervisor Email']) === managerEmail &&
@@ -239,6 +239,9 @@ function resolveClaimEmployee_(sessionToken, targetEmployeeId) {
   const requestedId = normalizeEmployeeId_(targetEmployeeId);
   const submitterId = normalizeEmployeeId_(submitter['Employee ID']);
   if (!requestedId || requestedId === submitterId) return { submitter: submitter, employee: submitter, onBehalf: false };
+  if (!isManager_(submitter)) {
+    throw new Error('On-behalf claims are available only to Grade V or above employees designated as Team Leaders or HODs.');
+  }
 
   const employee = findActiveEmployeeById_(requestedId);
   if (!employee || normalizeEmail_(employee['Supervisor Email']) !== normalizeEmail_(submitter.Email)) {
@@ -403,6 +406,19 @@ function normalizeGradeCode_(value) {
   return normalizeHeader_(value).replace(/^grade/, '');
 }
 
+function isManager_(employee) {
+  const designation = normalizeHeader_(employee.Designation);
+  const hasManagerDesignation = designation.indexOf('teamleader') >= 0 ||
+    designation.indexOf('hod') >= 0 || designation.indexOf('headofdepartment') >= 0;
+  const grade = normalizeGradeCode_(employee.Grade);
+  const numericGrade = grade.match(/^(\d+)/);
+  const romanGrade = grade.match(/(viii|vii|vi|ix|x|iv|v|iii|ii|i)$/);
+  const gradeRank = numericGrade ? Number(numericGrade[1]) : romanGrade ? {
+    i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10
+  }[romanGrade[1]] : 0;
+  return hasManagerDesignation && gradeRank >= 5;
+}
+
 function parseRateAmount_(value) {
   if (typeof value === 'number') return value;
   const normalized = String(value == null ? '' : value).replace(/,/g, '').replace(/[^0-9.-]/g, '');
@@ -456,19 +472,46 @@ function sendDecisionEmail_(claim, stage, token, webAppUrl) {
       escapeHtml_(webAppUrl + '?token=' + encodeURIComponent(token) + '&action=' + item[0]) + '">' + item[1] + '</a>';
   }).join('');
   const summary = decisionSummary_(claim);
-  const body = '<p>A claim requires your ' + (isSupervisor ? 'approval' : 'verification') + '.</p>' +
-    '<p><b>Employee:</b> ' + escapeHtml_(summary.employeeName) + ' (' + escapeHtml_(summary.employeeId) + ')<br>' +
-    '<b>Department / grade:</b> ' + escapeHtml_(summary.department) + ' / ' + escapeHtml_(summary.grade) + '<br>' +
-    '<b>Period:</b> ' + escapeHtml_(summary.period) + '<br>' +
-    '<b>Airtime / data:</b> ' + money_(summary.airtime) + ' / ' + money_(summary.data) + '<br>' +
-    '<b>Total:</b> ' + money_(summary.total) + '<br>' +
-    '<b>Recommended:</b> ' + money_(summary.recommended) + (summary.manualReview ? ' (manual review)' : '') + '<br>' +
-    (summary.submittedByEmployeeId && normalizeEmployeeId_(summary.submittedByEmployeeId) !== normalizeEmployeeId_(summary.employeeId)
-      ? '<b>Submitted by manager:</b> ' + escapeHtml_(summary.submittedByName) + ' (' + escapeHtml_(summary.submittedByEmployeeId) + ')<br>'
-      : '') +
-    '<b>Justification:</b> ' + escapeHtml_(summary.justification) + '</p>' +
-    '<p>' + links + '</p><p>The link opens a confirmation page where you can add an optional comment.</p>';
-  MailApp.sendEmail({ to: recipient, subject: 'Claim ' + claim['Claim ID'] + ' requires ' + (isSupervisor ? 'supervisor action' : 'HR verification'), htmlBody: body });
+  const details = [
+    ['Employee', summary.employeeName + ' (' + summary.employeeId + ')'],
+    ['Department / grade', summary.department + ' / ' + summary.grade],
+    ['Designation', claim.Designation],
+    ['Claim period', summary.period],
+    ['Airtime claimed', money_(summary.airtime)],
+    ['Data claimed', money_(summary.data)],
+    ['Total claimed', money_(summary.total)],
+    ['Approved limit', summary.manualReview ? 'Needs Manual Review' : money_(summary.approvedLimit)],
+    ['Recommended amount', money_(summary.recommended) + (summary.manualReview ? ' (manual review)' : '')]
+  ];
+  if (summary.submittedByEmployeeId && normalizeEmployeeId_(summary.submittedByEmployeeId) !== normalizeEmployeeId_(summary.employeeId)) {
+    details.push(['Submitted by manager', summary.submittedByName + ' (' + summary.submittedByEmployeeId + ')']);
+  }
+  details.push(['Justification', summary.justification]);
+
+  const detailRows = details.map(function (item, index) {
+    const background = index % 2 === 0 ? '#f5f8f6' : '#ffffff';
+    return '<tr style="background:' + background + '">' +
+      '<th scope="row" style="width:36%;padding:10px 12px;border:1px solid #dce4df;text-align:left;vertical-align:top;color:#53615b;font:600 13px Arial,sans-serif">' + item[0] + '</th>' +
+      '<td style="padding:10px 12px;border:1px solid #dce4df;vertical-align:top;color:#1d2927;font:14px/1.45 Arial,sans-serif;overflow-wrap:anywhere;white-space:pre-wrap">' + escapeHtml_(item[1]) + '</td>' +
+      '</tr>';
+  }).join('');
+  const body = '<div style="max-width:680px;margin:0 auto;color:#1d2927;font:14px/1.5 Arial,sans-serif">' +
+    '<h2 style="margin:0 0 8px;color:#175e55;font-size:20px">Claim ' + escapeHtml_(claim['Claim ID']) + '</h2>' +
+    '<p style="margin:0 0 18px;color:#53615b">This claim requires your ' + (isSupervisor ? 'approval' : 'HR verification') + '.</p>' +
+    '<table role="presentation" aria-label="Claim request details" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1px solid #dce4df">' +
+    '<tbody>' + detailRows + '</tbody></table>' +
+    '<div style="padding:20px 0 8px">' + links + '</div>' +
+    '<p style="margin:4px 0 0;color:#687571;font-size:12px">The decision link opens a confirmation page where you can add an optional comment.</p>' +
+    '</div>';
+  const plainBody = 'Claim ' + claim['Claim ID'] + ' requires your ' + (isSupervisor ? 'approval' : 'HR verification') + '.\n\n' +
+    details.map(function (item) { return item[0] + ': ' + item[1]; }).join('\n') +
+    '\n\nOpen the claim email in an HTML-capable client to use the decision buttons.';
+  MailApp.sendEmail({
+    to: recipient,
+    subject: 'Claim ' + claim['Claim ID'] + ' requires ' + (isSupervisor ? 'supervisor action' : 'HR verification'),
+    body: plainBody,
+    htmlBody: body
+  });
 }
 
 function trySendDecisionEmail_(claim, stage, token, webAppUrl) {

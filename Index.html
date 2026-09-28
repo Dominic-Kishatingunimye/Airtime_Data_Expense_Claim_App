@@ -93,11 +93,11 @@
         <div id="employeeDetails" class="employee-strip"></div>
         <form id="claimForm">
           <div id="claimForField" class="field hidden">
-            <label for="claimFor">Claiming for</label>
+            <label for="claimFor">Claim submission type</label>
             <select id="claimFor" name="employeeId">
               <option value="">My own claim</option>
             </select>
-            <p id="onBehalfNotice" class="quiet hidden">Claims submitted for a reporting employee go directly to HR.</p>
+            <p class="quiet">Select a reporting employee to submit a claim on their behalf. These claims go directly to HR.</p>
           </div>
           <div class="field"><label for="period">Claim period</label><input id="period" name="period" type="month" required></div>
           <div class="grid">
@@ -188,7 +188,7 @@
         managedEmployees = await callServer('getManagedEmployees', session.token);
         const selector = document.getElementById('claimFor');
         selector.replaceChildren(new Option('My own claim', ''));
-        managedEmployees.forEach(employee => selector.add(new Option(employee.name + ' · ' + employee.employeeId, employee.employeeId)));
+        managedEmployees.forEach(employee => selector.add(new Option(employee.name + ' · ' + employee.employeeId + ' (on behalf)', employee.employeeId)));
         document.getElementById('claimForField').classList.toggle('hidden', managedEmployees.length === 0);
       }
 
@@ -202,7 +202,6 @@
         document.getElementById('claimPanel').classList.remove('hidden');
         await loadManagedEmployees();
         renderEmployee(selectedClaimEmployee());
-        document.getElementById('onBehalfNotice').classList.toggle('hidden', !document.getElementById('claimFor').value);
         const now = new Date();
         document.getElementById('period').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
         refreshEligibility();
@@ -322,7 +321,6 @@
       document.getElementById('claimFor').addEventListener('change', () => {
         const selectedEmployee = selectedClaimEmployee();
         renderEmployee(selectedEmployee);
-        document.getElementById('onBehalfNotice').classList.toggle('hidden', !document.getElementById('claimFor').value);
         refreshEligibility();
       });
 
