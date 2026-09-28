@@ -470,7 +470,8 @@ function sendDecisionEmail_(claim, stage, token, webAppUrl) {
   const recipient = isSupervisor ? claim['HOD Email'] : getConfigValue_('HR_EMAIL');
   const actions = isSupervisor ? [['approve', 'Approve'], ['decline', 'Decline']] : [['verify', 'Verify'], ['reject', 'Reject']];
   const links = actions.map(function (item) {
-    return '<a style="display:inline-block;margin:0 10px 10px 0;padding:11px 18px;background:#175e55;color:#fff;text-decoration:none;border-radius:4px" href="' +
+    const background = item[0] === 'decline' || item[0] === 'reject' ? '#a43b31' : '#175e55';
+    return '<a style="display:inline-block;min-width:132px;margin:0 18px 14px 0;padding:15px 26px;background:' + background + ';color:#fff;text-decoration:none;border-radius:4px;text-align:center;font:700 16px Arial,sans-serif" href="' +
       escapeHtml_(webAppUrl + '?token=' + encodeURIComponent(token) + '&action=' + item[0]) + '">' + item[1] + '</a>';
   }).join('');
   const summary = decisionSummary_(claim);
