@@ -291,7 +291,6 @@ function submitDecision(token, action, comment) {
         row['HR Status'] = 'Pending';
         row['HR Token Hash'] = hashText_(nextHrToken);
         row['Overall Status'] = 'Pending HR';
-        webAppUrl = getWebAppUrl_();
       } else {
         row['Overall Status'] = 'Declined';
       }
@@ -304,13 +303,24 @@ function submitDecision(token, action, comment) {
     }
     context.sheet.getRange(context.sheetRow, 1, 1, context.headers.length)
       .setValues([context.headers.map(function (header) { return row[header] === undefined ? '' : row[header]; })]);
+    SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
   }
 
-  if (nextHrToken) notificationSent = trySendDecisionEmail_(context.row, 'hr', nextHrToken, webAppUrl);
+  if (nextHrToken) {
+    try {
+      webAppUrl = getWebAppUrl_();
+      notificationSent = trySendDecisionEmail_(context.row, 'hr', nextHrToken, webAppUrl);
+    } catch (error) {
+      notificationSent = false;
+      recordNotificationFailure_(context.row['Claim ID'], 'HR', error.message);
+    }
+  }
   const outcome = context.stage === 'supervisor'
-    ? (normalizedAction === 'approve' ? 'approved by your supervisor and sent to HR' : 'declined by your supervisor')
+    ? (normalizedAction === 'approve'
+      ? (notificationSent ? 'approved by your supervisor and sent to HR' : 'approved by your supervisor, but the HR notification could not be sent; contact Admin/HR')
+      : 'declined by your supervisor')
     : (normalizedAction === 'verify' ? 'verified by HR and is awaiting Finance payment' : 'rejected by HR');
   const employeeNotified = sendEmployeeEmail_(context.row['Employee Email'], 'Claim update', 'Your claim ' + context.row['Claim ID'] + ' was ' + outcome + '.');
   if (!employeeNotified) recordNotificationFailure_(context.row['Claim ID'], context.row['Employee Email'], 'Employee decision notification could not be delivered.');
