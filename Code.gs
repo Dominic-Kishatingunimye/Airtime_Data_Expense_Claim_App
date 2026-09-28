@@ -58,7 +58,9 @@ function sendLoginCode(employeeId) {
   const response = { message: 'If this Employee ID is active, a sign-in code has been sent to the company email on file.' };
   if (!employee) return response;
   const recipient = normalizeEmail_(employee.Email);
-  if (!isCompanyEmail_(recipient)) throw new Error('Your company email is missing or invalid in Employee Master. Contact Admin/HR.');
+  if (!isCompanyEmail_(recipient)) {
+    throw new Error('No valid @indorama.com email is recorded for this Employee ID. Ask HR/Admin to update the Email field in Employee Master before requesting a sign-in code.');
+  }
 
   const cache = CacheService.getScriptCache();
   const employeeKey = hashText_(normalizedId);
