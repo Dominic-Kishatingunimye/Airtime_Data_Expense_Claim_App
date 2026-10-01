@@ -59,7 +59,7 @@ function sendLoginCode(employeeId) {
   if (!employee) return response;
   const recipient = normalizeEmail_(employee.Email);
   if (!isCompanyEmail_(recipient)) {
-    throw new Error('No valid @indorama.com email is recorded for this Employee ID. Ask HR/Admin to update the Email field in Employee Master before requesting a sign-in code.');
+    throw new Error('No valid @indorama.com email is recorded for this Employee ID. Ask HR to update the Email field in Employee Master before requesting a sign-in code.');
   }
 
   const cache = CacheService.getScriptCache();
@@ -83,7 +83,7 @@ function sendLoginCode(employeeId) {
     cache.remove(cooldownKey);
     cache.remove(codeKey);
     console.error('Login code email failed: ' + error.message);
-    throw new Error('Could not send the sign-in code. Contact Admin/HR or try again later.');
+    throw new Error('Could not send the sign-in code. Contact HR or try again later.');
   }
   return response;
 }
@@ -117,7 +117,7 @@ function verifyLoginCode(employeeId, verificationCode) {
   }
 
   const employee = findActiveEmployeeById_(normalizedId);
-  if (!employee) throw new Error('This employee account is unavailable. Contact Admin/HR.');
+  if (!employee) throw new Error('This employee account is unavailable. Contact HR.');
   const sessionToken = Utilities.getUuid();
   CacheService.getScriptCache().put('session:' + hashText_(sessionToken), normalizedId, SESSION_TTL_SECONDS);
   return { token: sessionToken, employee: publicEmployee_(employee) };
@@ -152,13 +152,13 @@ function submitClaim(sessionToken, claim) {
   const justification = String(request.justification || '').trim();
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new Error('Select a valid claim period.');
   if (!justification || justification.length > 1000) throw new Error('Add a justification (maximum 1,000 characters).');
-  if (!isCompanyEmail_(employee.Email)) throw new Error('The employee company email is missing or invalid. Contact Admin/HR; this claim has not been submitted.');
+  if (!isCompanyEmail_(employee.Email)) throw new Error('The employee company email is missing or invalid. Contact HR; this claim has not been submitted.');
   if (!onBehalf && (!employee['Supervisor Email'] || !isEmail_(employee['Supervisor Email']))) {
-    throw new Error('Your reporting supervisor is not mapped. Contact Admin/HR; this claim has not been submitted.');
+    throw new Error('Your reporting supervisor is not mapped. Contact HR; this claim has not been submitted.');
   }
 
   const hrEmail = getConfigValue_('HR_EMAIL');
-  if (!isEmail_(hrEmail)) throw new Error('HR_EMAIL is not configured. Contact Admin/HR; this claim has not been submitted.');
+  if (!isEmail_(hrEmail)) throw new Error('HR_EMAIL is not configured. Contact HR; this claim has not been submitted.');
   const webAppUrl = getWebAppUrl_();
   const eligibility = eligibilityFor_(employee, amounts.airtime, amounts.data);
   if (!eligibility.configured) throw new Error(eligibility.message);
@@ -221,11 +221,11 @@ function submitClaim(sessionToken, claim) {
     : trySendDecisionEmail_(claimRecord, 'supervisor', hodToken, webAppUrl);
   const employeeNotified = sendEmployeeEmail_(claimRecord['Employee Email'], 'Claim submitted', decisionNotified
     ? 'A claim for you (' + claimRecord['Claim ID'] + ') was submitted ' + (onBehalf ? 'by your manager and sent directly to HR.' : 'and sent to your supervisor.')
-    : 'Your claim ' + claimRecord['Claim ID'] + ' was saved, but the approval notification could not be sent. Contact Admin/HR.');
+    : 'Your claim ' + claimRecord['Claim ID'] + ' was saved, but the approval notification could not be sent. Contact HR.');
   if (!employeeNotified) recordNotificationFailure_(claimRecord['Claim ID'], claimRecord['Employee Email'], 'Employee submission notification could not be delivered.');
   let submitterNotified = true;
   if (onBehalf) {
-    submitterNotified = sendEmployeeEmail_(submitter.Email, 'Claim submitted on behalf', 'Claim ' + claimRecord['Claim ID'] + ' for ' + employee['Full Name'] + ' was ' + (decisionNotified ? 'sent directly to HR.' : 'saved, but the HR notification could not be sent. Contact Admin/HR.'));
+    submitterNotified = sendEmployeeEmail_(submitter.Email, 'Claim submitted on behalf', 'Claim ' + claimRecord['Claim ID'] + ' for ' + employee['Full Name'] + ' was ' + (decisionNotified ? 'sent directly to HR.' : 'saved, but the HR notification could not be sent. Contact HR.'));
     if (!submitterNotified) recordNotificationFailure_(claimRecord['Claim ID'], submitter.Email, 'Manager submission notification could not be delivered.');
   }
   return {
@@ -319,7 +319,7 @@ function submitDecision(token, action, comment) {
   }
   const outcome = context.stage === 'supervisor'
     ? (normalizedAction === 'approve'
-      ? (notificationSent ? 'approved by your supervisor and sent to HR' : 'approved by your supervisor, but the HR notification could not be sent; contact Admin/HR')
+      ? (notificationSent ? 'approved by your supervisor and sent to HR' : 'approved by your supervisor, but the HR notification could not be sent; contact HR')
       : 'declined by your supervisor')
     : (normalizedAction === 'verify' ? 'verified by HR and is awaiting Finance payment' : 'rejected by HR');
   const employeeNotified = sendEmployeeEmail_(context.row['Employee Email'], 'Claim update', 'Your claim ' + context.row['Claim ID'] + ' was ' + outcome + '.');
@@ -359,20 +359,20 @@ function requireEmployee_(sessionToken) {
   const employee = table.rows.find(function (row) {
     return String(row['Employee ID'] || '').trim().toUpperCase() === id && String(row.Active || '').trim().toUpperCase() === 'Y';
   });
-  if (!employee) throw new Error('Employee account is unavailable. Contact Admin/HR.');
+  if (!employee) throw new Error('Employee account is unavailable. Contact HR.');
   return employee;
 }
 
 function eligibilityFor_(employee, airtime, data) {
   const table = readTable_(SHEETS.rates);
   const grade = normalizeGradeCode_(employee.Grade);
-  if (!grade) return { configured: false, message: 'Your employee grade is missing. Contact Admin/HR; this claim has not been submitted.' };
+  if (!grade) return { configured: false, message: 'Your employee grade is missing. Contact HR; this claim has not been submitted.' };
   const matchingRates = table.rows.filter(function (row) {
     const rateGrade = normalizeGradeCode_(getFieldValue_(row, ['Grade Code', 'Grade', 'Grade Level']));
     return rateGrade && rateGrade === grade;
   });
   if (!matchingRates.length) return { configured: false, message: 'No Grade Limits record matches grade "' + String(employee.Grade || '').trim() + '". Check the Grade Code values in the Grade Limits sheet; this claim has not been submitted.' };
-  if (matchingRates.length > 1) return { configured: false, message: 'More than one Grade Limits row matches your grade. Contact Admin/HR to remove the duplicate; this claim has not been submitted.' };
+  if (matchingRates.length > 1) return { configured: false, message: 'More than one Grade Limits row matches your grade. Contact HR to remove the duplicate; this claim has not been submitted.' };
 
   const rate = matchingRates[0];
   const airtimeLimit = parseRateAmount_(getFieldValue_(rate, ['Airtime Limit (NGN)', 'Airtime Limit', 'Approved Airtime Limit']));
@@ -383,10 +383,10 @@ function eligibilityFor_(employee, airtime, data) {
     return { configured: true, needsManualReview: true, total: airtime + data, limit: null, message: 'Needs Manual Review: no fixed cap is configured for this grade.' };
   }
   if (!Number.isFinite(airtimeLimit) || !Number.isFinite(dataLimit) || airtimeLimit < 0 || dataLimit < 0) {
-    return { configured: false, message: 'The approved rate for your grade is incomplete. Contact Admin/HR; this claim has not been submitted.' };
+    return { configured: false, message: 'The approved rate for your grade is incomplete. Contact HR; this claim has not been submitted.' };
   }
   if (capFlag && ['Y', 'YES', 'TRUE', 'FIXED'].indexOf(capFlag) < 0) {
-    return { configured: false, message: 'The fixed-cap setting for your grade must be Y or N. Contact Admin/HR; this claim has not been submitted.' };
+    return { configured: false, message: 'The fixed-cap setting for your grade must be Y or N. Contact HR; this claim has not been submitted.' };
   }
   const limit = airtimeLimit + dataLimit;
   const total = airtime + data;
