@@ -57,6 +57,7 @@
       .message.success { background: var(--mint); color: var(--green-dark); }
       .subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 18px; }
       .quiet { color: var(--muted); font: 12px/1.4 Arial, sans-serif; }
+      .quiet.warning { color: var(--amber); }
       .hidden { display: none !important; }
       .amount { font-variant-numeric: tabular-nums; }
       @keyframes arrive { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
@@ -92,12 +93,12 @@
         <div id="claimMessage" class="message" role="status"></div>
         <div id="employeeDetails" class="employee-strip"></div>
         <form id="claimForm">
-          <div id="claimForField" class="field hidden">
+          <div id="claimForField" class="field">
             <label for="claimFor">Claim submission type</label>
             <select id="claimFor" name="employeeId">
               <option value="">My own claim</option>
             </select>
-            <p class="quiet">Select a reporting employee to submit a claim on their behalf. These claims go directly to HR.</p>
+            <p id="claimForHelp" class="quiet"></p>
           </div>
           <div class="field"><label for="period">Claim period</label><input id="period" name="period" type="month" required></div>
           <div class="grid">
@@ -121,6 +122,8 @@
     </main>
     <script>
       const INITIAL_DECISION = <?!= initialDecision ?>;
+      const INITIAL_DECISION_INFO = <?!= initialDecisionInfo ?>;
+      const INITIAL_DECISION_ERROR = <?!= initialDecisionError ?>;
       const SESSION_KEY = 'airtimeClaimSession';
       let session = null;
       let eligibilityReady = false;
@@ -132,7 +135,10 @@
           google.script.run
             .withSuccessHandler(result => {
               if (result == null) {
-                reject(new Error('The server returned no decision result. Check the Claims Tracker before retrying; the decision may already have been recorded. Then deploy the latest Apps Script version and reopen the email link.'));
+                const message = method === 'submitDecision'
+                  ? 'The server did not confirm this decision. Check the Claims Tracker before retrying; the decision may already have been recorded.'
+                  : 'The server returned no response for ' + method + '. No decision was submitted.';
+                reject(new Error(message));
                 return;
               }
               resolve(result);
@@ -185,11 +191,15 @@
 
       async function loadManagedEmployees() {
         if (managedEmployees !== null) return;
-        managedEmployees = await callServer('getManagedEmployees', session.token);
+        const options = await callServer('getManagerClaimOptions', session.token);
+        managedEmployees = options.employees;
         const selector = document.getElementById('claimFor');
         selector.replaceChildren(new Option('My own claim', ''));
         managedEmployees.forEach(employee => selector.add(new Option(employee.name + ' · ' + employee.employeeId + ' (on behalf)', employee.employeeId)));
-        document.getElementById('claimForField').classList.toggle('hidden', managedEmployees.length === 0);
+        selector.disabled = !options.enabled;
+        const help = document.getElementById('claimForHelp');
+        help.textContent = options.message;
+        help.className = 'quiet' + (!options.enabled || managedEmployees.length === 0 ? ' warning' : '');
       }
 
       function showLogin() {
@@ -241,7 +251,9 @@
         document.getElementById('loginPanel').classList.add('hidden');
         document.getElementById('claimPanel').classList.add('hidden');
         try {
-          decision = await callServer('getDecisionInfo', INITIAL_DECISION.token, INITIAL_DECISION.action);
+          if (INITIAL_DECISION_ERROR) throw new Error(INITIAL_DECISION_ERROR);
+          decision = INITIAL_DECISION_INFO;
+          if (!decision) throw new Error('Claim details could not be loaded. No decision has been recorded. Contact HR for help.');
           if (decision.alreadyActioned) {
             showMessage(document.getElementById('decisionMessage'), 'This claim has already been actioned. No changes were made.', 'success');
             document.getElementById('decisionIntro').classList.add('hidden');
@@ -340,7 +352,7 @@
           setBusy(button, false, 'Submit claim');
           showMessage(document.getElementById('claimMessage'), result.notificationSent
             ? (result.onBehalf ? 'Claim ' + result.claimId + ' for ' + result.employeeName + ' submitted directly to HR.' : 'Claim ' + result.claimId + ' submitted. Your supervisor has been notified.')
-            : 'Claim ' + result.claimId + ' was saved, but an email could not be delivered. Contact Admin/HR.', result.notificationSent ? 'success' : 'error');
+            : 'Claim ' + result.claimId + ' was saved, but an email could not be delivered. Contact HR.', result.notificationSent ? 'success' : 'error');
           document.getElementById('claimForm').reset();
           await showClaim();
         } catch (error) {
@@ -364,7 +376,7 @@
           const result = await callServer('submitDecision', INITIAL_DECISION.token, decision.action, document.getElementById('comment').value);
           showMessage(document.getElementById('decisionMessage'), result.alreadyActioned
             ? 'This claim was already actioned. No changes were made.'
-            : 'Decision recorded: ' + result.status + '.' + (result.notificationSent ? '' : ' An email could not be delivered; contact Admin/HR.'), result.notificationSent === false ? 'error' : 'success');
+            : 'Decision recorded: ' + result.status + '.' + (result.notificationSent ? '' : ' An email could not be delivered; contact HR.'), result.notificationSent === false ? 'error' : 'success');
           document.querySelector('#decisionPanel .actions').classList.add('hidden');
         } catch (error) {
           showMessage(document.getElementById('decisionMessage'), error.message, 'error');

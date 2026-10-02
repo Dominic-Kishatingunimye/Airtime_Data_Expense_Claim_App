@@ -29,8 +29,19 @@ function doGet(e) {
   const token = /^[0-9a-f-]{36}$/i.test(params.token || '') ? params.token : '';
   const allowedActions = ['approve', 'decline', 'verify', 'reject'];
   const action = allowedActions.indexOf((params.action || '').toLowerCase()) >= 0 ? params.action.toLowerCase() : '';
+  let initialDecisionInfo = null;
+  let initialDecisionError = '';
+  if (token && action) {
+    try {
+      initialDecisionInfo = getDecisionInfo(token, action);
+    } catch (error) {
+      initialDecisionError = error.message;
+    }
+  }
   const template = HtmlService.createTemplateFromFile('Index');
-  template.initialDecision = JSON.stringify({ token: token, action: action });
+  template.initialDecision = safeJsonForHtml_({ token: token, action: action });
+  template.initialDecisionInfo = safeJsonForHtml_(initialDecisionInfo);
+  template.initialDecisionError = safeJsonForHtml_(initialDecisionError);
   return template.evaluate()
     .setTitle('Airtime & Data Expense Claims')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -123,15 +134,31 @@ function verifyLoginCode(employeeId, verificationCode) {
   return { token: sessionToken, employee: publicEmployee_(employee) };
 }
 
-function getManagedEmployees(sessionToken) {
+function getManagerClaimOptions(sessionToken) {
   const manager = requireEmployee_(sessionToken);
   const managerEmail = normalizeEmail_(manager.Email);
-  if (!isManager_(manager) || !isCompanyEmail_(managerEmail)) return [];
-  return readTable_(SHEETS.employees).rows.filter(function (row) {
+  if (!isManager_(manager)) {
+    return {
+      enabled: false,
+      employees: [],
+      message: 'On-behalf claims are available to Grade V or above employees designated as Team Leaders or HODs.'
+    };
+  }
+  if (!isCompanyEmail_(managerEmail)) {
+    return { enabled: false, employees: [], message: 'Ask HR to add your valid @indorama.com email to Employee Master.' };
+  }
+  const employees = readTable_(SHEETS.employees).rows.filter(function (row) {
     return String(row.Active || '').trim().toUpperCase() === 'Y' &&
       normalizeEmail_(row['Supervisor Email']) === managerEmail &&
       normalizeEmployeeId_(row['Employee ID']) !== normalizeEmployeeId_(manager['Employee ID']);
   }).map(publicEmployee_);
+  return {
+    enabled: true,
+    employees: employees,
+    message: employees.length
+      ? 'Select a reporting employee to submit a claim on their behalf. These claims go directly to HR.'
+      : 'No active reporting employees are mapped to your company email. Ask HR to update their Supervisor Email in Employee Master.'
+  };
 }
 
 function getEligibility(sessionToken, airtime, data, targetEmployeeId) {
@@ -422,12 +449,12 @@ function isManager_(employee) {
   const designation = normalizeHeader_(employee.Designation);
   const hasManagerDesignation = designation.indexOf('teamleader') >= 0 ||
     designation.indexOf('hod') >= 0 || designation.indexOf('headofdepartment') >= 0;
-  const grade = normalizeGradeCode_(employee.Grade);
-  const numericGrade = grade.match(/^(\d+)/);
-  const romanGrade = grade.match(/(viii|vii|vi|ix|x|iv|v|iii|ii|i)$/);
+  const grade = String(employee.Grade || '').trim();
+  const numericGrade = grade.match(/\b(\d+)\b/);
+  const romanGrade = grade.match(/\b(viii|vii|vi|ix|x|iv|v|iii|ii|i)\b/i);
   const gradeRank = numericGrade ? Number(numericGrade[1]) : romanGrade ? {
     i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10
-  }[romanGrade[1]] : 0;
+  }[romanGrade[1].toLowerCase()] : 0;
   return hasManagerDesignation && gradeRank >= 5;
 }
 
@@ -685,4 +712,10 @@ function normalizeEmployeeId_(value) {
 
 function isCompanyEmail_(email) {
   return /^[^\s@]+@indorama\.com$/i.test(String(email || '').trim());
+}
+
+function safeJsonForHtml_(value) {
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, function (character) {
+    return { '<': '\\u003c', '>': '\\u003e', '&': '\\u0026', '\u2028': '\\u2028', '\u2029': '\\u2029' }[character];
+  });
 }
