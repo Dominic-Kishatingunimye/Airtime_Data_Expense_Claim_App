@@ -93,6 +93,7 @@
         <div id="claimMessage" class="message" role="status"></div>
         <div id="employeeDetails" class="employee-strip"></div>
         <form id="claimForm">
+          <input id="claimSessionToken" name="sessionToken" type="hidden">
           <div id="claimForField" class="field">
             <label for="claimFor">Claim submission type</label>
             <select id="claimFor" name="employeeId">
@@ -107,6 +108,11 @@
           </div>
           <div id="eligibility" class="rate hidden" aria-live="polite"></div>
           <div class="field"><label for="justification">Justification</label><textarea id="justification" name="justification" maxlength="1000" required></textarea></div>
+          <div class="field">
+            <label for="receipt">Receipt evidence (PDF, JPEG, or PNG)</label>
+            <input id="receipt" name="receipt" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" required>
+            <p class="quiet">Attach the receipt for the airtime or data purchase. Maximum file size: 10 MB.</p>
+          </div>
           <button id="submitClaim" class="button" type="submit" disabled>Submit claim</button>
         </form>
       </section>
@@ -210,6 +216,7 @@
       async function showClaim() {
         document.getElementById('loginPanel').classList.add('hidden');
         document.getElementById('claimPanel').classList.remove('hidden');
+        document.getElementById('claimSessionToken').value = session.token;
         await loadManagedEmployees();
         renderEmployee(selectedClaimEmployee());
         const now = new Date();
@@ -342,13 +349,7 @@
         const button = document.getElementById('submitClaim');
         setBusy(button, true, 'Submit claim');
         try {
-          const result = await callServer('submitClaim', session.token, {
-            period: document.getElementById('period').value,
-            airtime: document.getElementById('airtime').value,
-            data: document.getElementById('data').value,
-            justification: document.getElementById('justification').value,
-            employeeId: document.getElementById('claimFor').value
-          });
+          const result = await callServer('submitClaim', document.getElementById('claimForm'));
           setBusy(button, false, 'Submit claim');
           showMessage(document.getElementById('claimMessage'), result.notificationSent
             ? (result.onBehalf ? 'Claim ' + result.claimId + ' for ' + result.employeeName + ' submitted directly to HR.' : 'Claim ' + result.claimId + ' submitted. Your supervisor has been notified.')

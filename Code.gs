@@ -14,7 +14,8 @@ const HEADERS = {
     'Excess Claimed (NGN)', 'Amount Recommended (NGN)', 'Justification', 'Needs Manual Review', 'HOD Name', 'HOD Email',
     'HOD Status', 'HOD Comment', 'HOD Decision Timestamp', 'HOD Token Hash', 'HOD Token Used', 'HR Status', 'HR Comment',
     'HR Decision Timestamp', 'HR Token Hash', 'HR Token Used', 'Finance Status', 'Payment Date', 'Overall Status', 'Remarks',
-    'Submitted By Employee ID', 'Submitted By Name', 'Submitted By Email'
+    'Submitted By Employee ID', 'Submitted By Name', 'Submitted By Email',
+    'Evidence File ID', 'Evidence File Name', 'Evidence URL'
   ],
   config: ['Key', 'Value']
 };
@@ -23,6 +24,8 @@ const ACTIVE_CLAIM_STATUSES = ['Pending Supervisor', 'Pending HR', 'Verified - A
 const SESSION_TTL_SECONDS = 21600;
 const LOGIN_CODE_TTL_SECONDS = 300;
 const LOGIN_CODE_MAX_ATTEMPTS = 5;
+const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
+const EVIDENCE_FOLDER_PROPERTY = 'EVIDENCE_FOLDER_ID';
 
 function doGet(e) {
   const params = e && e.parameter ? e.parameter : {};
@@ -51,6 +54,7 @@ function setupApplication() {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   if (!spreadsheet) throw new Error('Open this script from the claims spreadsheet before running setup.');
   PropertiesService.getScriptProperties().setProperty('SPREADSHEET_ID', spreadsheet.getId());
+  ensureEvidenceFolder_();
   Object.keys(HEADERS).forEach(function (key) {
     ensureSheet_(spreadsheet, SHEETS[key], HEADERS[key]);
   });
@@ -168,8 +172,10 @@ function getEligibility(sessionToken, airtime, data, targetEmployeeId) {
   return { employee: publicEmployee_(context.employee), eligibility: result };
 }
 
-function submitClaim(sessionToken, claim) {
-  const request = claim || {};
+function submitClaim(form) {
+  const request = form || {};
+  const sessionToken = String(request.sessionToken || '');
+  const receipt = validateReceipt_(request.receipt);
   const context = resolveClaimEmployee_(sessionToken, request.employeeId);
   const submitter = context.submitter;
   const employee = context.employee;
@@ -196,6 +202,7 @@ function submitClaim(sessionToken, claim) {
   let claimRecord;
   let hodToken;
   let hrToken;
+  let evidenceFile;
   try {
     const table = readTable_(SHEETS.claims);
     const duplicate = table.rows.some(function (row) {
@@ -205,10 +212,17 @@ function submitClaim(sessionToken, claim) {
     if (duplicate) throw new Error('An active claim already exists for this period.');
 
     const total = amounts.airtime + amounts.data;
+    const claimId = Utilities.getUuid();
     if (onBehalf) hrToken = Utilities.getUuid();
     else hodToken = Utilities.getUuid();
+    evidenceFile = saveReceipt_(receipt, claimId, [
+      employee.Email,
+      submitter.Email,
+      hrEmail,
+      onBehalf ? '' : employee['Supervisor Email']
+    ]);
     claimRecord = {
-      'Claim ID': Utilities.getUuid(),
+      'Claim ID': claimId,
       'S/N': Math.max(0, table.sheet.getLastRow() - 1) + 1,
       'Submitted At': new Date(),
       'Employee ID': employee['Employee ID'],
@@ -236,9 +250,21 @@ function submitClaim(sessionToken, claim) {
       'Overall Status': onBehalf ? 'Pending HR' : 'Pending Supervisor',
       'Submitted By Employee ID': submitter['Employee ID'],
       'Submitted By Name': submitter['Full Name'],
-      'Submitted By Email': submitter.Email
+      'Submitted By Email': submitter.Email,
+      'Evidence File ID': evidenceFile.getId(),
+      'Evidence File Name': receipt.fileName,
+      'Evidence URL': evidenceFile.getUrl()
     };
     table.sheet.appendRow(table.headers.map(function (header) { return claimRecord[header] === undefined ? '' : claimRecord[header]; }));
+  } catch (error) {
+      if (evidenceFile) {
+        try {
+          evidenceFile.setTrashed(true);
+        } catch (cleanupError) {
+          console.error('Could not remove orphan receipt file: ' + cleanupError.message);
+        }
+      }
+    throw error;
   } finally {
     lock.releaseLock();
   }
@@ -498,7 +524,8 @@ function decisionSummary_(row) {
     department: row.Department, grade: row.Grade, period: row['Claim Period'], airtime: row['Airtime Claimed (NGN)'],
     data: row['Data Claimed (NGN)'], total: row['Total Claimed (NGN)'], approvedLimit: row['Approved Limit (NGN)'],
     recommended: row['Amount Recommended (NGN)'], manualReview: row['Needs Manual Review'] === 'Y', justification: row.Justification,
-    submittedByEmployeeId: row['Submitted By Employee ID'], submittedByName: row['Submitted By Name'], submittedByEmail: row['Submitted By Email']
+    submittedByEmployeeId: row['Submitted By Employee ID'], submittedByName: row['Submitted By Name'], submittedByEmail: row['Submitted By Email'],
+    evidenceFileName: row['Evidence File Name'], evidenceUrl: row['Evidence URL']
   };
 }
 
@@ -526,6 +553,7 @@ function sendDecisionEmail_(claim, stage, token, webAppUrl) {
   if (summary.submittedByEmployeeId && normalizeEmployeeId_(summary.submittedByEmployeeId) !== normalizeEmployeeId_(summary.employeeId)) {
     details.push(['Submitted by manager', summary.submittedByName + ' (' + summary.submittedByEmployeeId + ')']);
   }
+  if (summary.evidenceFileName) details.push(['Receipt attached', summary.evidenceFileName]);
   details.push(['Justification', summary.justification]);
 
   const detailRows = details.map(function (item, index) {
@@ -546,12 +574,17 @@ function sendDecisionEmail_(claim, stage, token, webAppUrl) {
   const plainBody = 'Claim ' + claim['Claim ID'] + ' requires your ' + (isSupervisor ? 'approval' : 'HR verification') + '.\n\n' +
     details.map(function (item) { return item[0] + ': ' + item[1]; }).join('\n') +
     '\n\nOpen the claim email in an HTML-capable client to use the decision buttons.';
-  MailApp.sendEmail({
+  const emailOptions = {
     to: recipient,
     subject: 'Claim ' + claim['Claim ID'] + ' requires ' + (isSupervisor ? 'supervisor action' : 'HR verification'),
     body: plainBody,
     htmlBody: body
-  });
+  };
+  if (claim['Evidence File ID']) {
+    const receiptFile = DriveApp.getFileById(claim['Evidence File ID']);
+    emailOptions.attachments = [receiptFile.getBlob().setName(summary.evidenceFileName || receiptFile.getName())];
+  }
+  MailApp.sendEmail(emailOptions);
 }
 
 function trySendDecisionEmail_(claim, stage, token, webAppUrl) {
@@ -642,6 +675,85 @@ function ensureHeaders_(sheet, headers) {
   const missingHeaders = headers.filter(function (header) { return currentHeaders.indexOf(header) < 0; });
   if (missingHeaders.length) {
     sheet.getRange(1, currentHeaders.length + 1, 1, missingHeaders.length).setValues([missingHeaders]);
+  }
+}
+
+function ensureEvidenceFolder_() {
+  const properties = PropertiesService.getScriptProperties();
+  const existingId = properties.getProperty(EVIDENCE_FOLDER_PROPERTY);
+  if (existingId) {
+    try {
+      return DriveApp.getFolderById(existingId);
+    } catch (error) {
+      properties.deleteProperty(EVIDENCE_FOLDER_PROPERTY);
+    }
+  }
+  const folder = DriveApp.createFolder('Airtime and Data Claim Evidence');
+  properties.setProperty(EVIDENCE_FOLDER_PROPERTY, folder.getId());
+  return folder;
+}
+
+function validateReceipt_(blob) {
+  if (!blob || typeof blob.getBytes !== 'function') {
+    throw new Error('Attach a receipt as a PDF, JPEG, or PNG before submitting the claim.');
+  }
+  const fileName = String(blob.getName() || '').trim();
+  const extension = fileName.indexOf('.') >= 0 ? fileName.split('.').pop().toLowerCase() : '';
+  const mimeTypes = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
+  const mimeType = mimeTypes[extension];
+  if (!mimeType) throw new Error('Receipt must be a PDF, JPEG, or PNG file.');
+
+  const bytes = blob.getBytes();
+  if (!bytes.length) throw new Error('The selected receipt file is empty. Choose another file.');
+  if (bytes.length > MAX_RECEIPT_BYTES) throw new Error('Receipt must be 10 MB or smaller.');
+
+  const byteAt = function (index) { return (bytes[index] + 256) % 256; };
+  const validSignature = extension === 'pdf'
+    ? bytes.length >= 5 && String.fromCharCode.apply(null, bytes.slice(0, 5)) === '%PDF-'
+    : extension === 'png'
+      ? bytes.length >= 8 && [137, 80, 78, 71, 13, 10, 26, 10].every(function (value, index) { return byteAt(index) === value; })
+      : bytes.length >= 3 && byteAt(0) === 255 && byteAt(1) === 216 && byteAt(2) === 255;
+  if (!validSignature) throw new Error('The receipt content does not match its file type. Upload a valid PDF, JPEG, or PNG.');
+
+  const safeName = fileName.replace(/[\\/:*?"<>|\r\n]/g, '_').slice(-120) || ('receipt.' + extension);
+  const normalizedBlob = blob.copyBlob().setName(safeName).setContentType(mimeType);
+  return { blob: normalizedBlob, fileName: safeName, mimeType: mimeType };
+}
+
+function saveReceipt_(receipt, claimId, recipients) {
+  let file;
+  let operation = 'opening or creating the evidence folder';
+  try {
+    const folder = ensureEvidenceFolder_();
+    operation = 'saving the receipt file to Drive';
+    const storedBlob = receipt.blob.copyBlob().setName(claimId + '_receipt_' + receipt.fileName);
+    file = folder.createFile(storedBlob);
+
+    const ownerEmail = normalizeEmail_(Session.getEffectiveUser().getEmail());
+    const viewerEmails = {};
+    operation = 'checking receipt viewer email addresses';
+    recipients.forEach(function (email) {
+      const normalized = normalizeEmail_(email);
+      if (!normalized || normalized === ownerEmail || viewerEmails[normalized]) return;
+      if (!isCompanyEmail_(normalized)) throw new Error('Receipt access can only be granted to @indorama.com addresses. Check the employee, supervisor, and HR email mappings.');
+      viewerEmails[normalized] = true;
+    });
+    Object.keys(viewerEmails).forEach(function (email) {
+      operation = 'sharing the receipt with ' + email;
+      file.addViewer(email);
+    });
+    return file;
+  } catch (error) {
+    const reason = String(error && error.message ? error.message : error);
+    console.error('Receipt save/share failed for claim ' + claimId + ' while ' + operation + ': ' + (error && error.stack ? error.stack : reason));
+    if (file) {
+      try {
+        file.setTrashed(true);
+      } catch (cleanupError) {
+        console.error('Receipt cleanup failed for claim ' + claimId + ': ' + (cleanupError && cleanupError.stack ? cleanupError.stack : String(cleanupError)));
+      }
+    }
+    throw new Error('Receipt processing failed while ' + operation + ': ' + reason + '. The claim was not submitted.');
   }
 }
 
