@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #1d2927;
+        --muted: #687571;
+        --paper: #f4f5ef;
+        --surface: #fff;
+        --line: #dce2db;
+        --green: #175e55;
+        --green-dark: #104941;
+        --mint: #e3f0e9;
+        --amber: #84500b;
+        --amber-bg: #fbf1d8;
+        --red: #9d3429;
+        --red-bg: #f8e8e5;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; background: linear-gradient(135deg, #f4f5ef, #edf3ed 55%, #f5f0e5); color: var(--ink); font: 16px/1.5 Georgia, 'Times New Roman', serif; }
+      button, input, textarea { font: inherit; }
+      button { cursor: pointer; }
+      .shell { width: min(100% - 32px, 760px); margin: 0 auto; padding: 30px 0 56px; }
+      .masthead { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; color: var(--green-dark); }
+      .mark { display: block; width: 188px; height: 38px; object-fit: contain; }
+      .brand { font: 700 12px/1.2 Arial, sans-serif; letter-spacing: 1.1px; text-transform: uppercase; }
+      .panel { padding: clamp(22px, 5vw, 42px); border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.94); box-shadow: 0 14px 36px rgba(29,41,39,.06); animation: arrive .35s ease-out both; }
+      h1 { margin: 0 0 8px; font-size: clamp(27px, 5vw, 38px); font-weight: 500; line-height: 1.12; }
+      .intro { margin: 0 0 28px; color: var(--muted); }
+      h2 { margin: 0; font-size: 20px; font-weight: 500; }
+      label { display: block; margin: 0 0 7px; font: 700 12px/1.3 Arial, sans-serif; letter-spacing: .25px; }
+      input, textarea { width: 100%; padding: 11px 12px; border: 1px solid #cbd5ce; border-radius: 3px; background: #fff; color: var(--ink); }
+      input:focus, textarea:focus { outline: 2px solid #79a99a; outline-offset: 1px; }
+      input[readonly] { background: #f4f6f3; color: #53605b; }
+      textarea { min-height: 96px; resize: vertical; }
+      .field { margin-bottom: 18px; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+      .employee-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; padding: 16px; margin-bottom: 24px; border-left: 3px solid var(--green); background: #f2f6f2; }
+      .employee-item span { display: block; color: var(--muted); font: 700 10px/1.3 Arial, sans-serif; letter-spacing: .5px; text-transform: uppercase; }
+      .employee-item strong { display: block; margin-top: 3px; font: 15px/1.35 Arial, sans-serif; overflow-wrap: anywhere; }
+      .rate { padding: 14px 16px; margin: -1px 0 20px; border-radius: 3px; background: var(--mint); color: var(--green-dark); font: 14px/1.5 Arial, sans-serif; }
+      .rate.warning { background: var(--amber-bg); color: var(--amber); }
+      .rate.error { background: var(--red-bg); color: var(--red); }
+      .button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; padding: 10px 19px; border: 0; border-radius: 3px; background: var(--green); color: #fff; font: 700 13px/1.2 Arial, sans-serif; }
+      .button:hover { background: var(--green-dark); }
+      .button:disabled { cursor: wait; opacity: .58; }
+      .button.secondary { border: 1px solid #cbd5ce; background: #fff; color: var(--ink); }
+      .button.secondary:hover { background: #f2f6f2; }
+      .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+      .message { display: none; padding: 12px 14px; margin: 0 0 18px; border-radius: 3px; font: 14px/1.45 Arial, sans-serif; }
+      .message.show { display: block; }
+      .message.error { background: var(--red-bg); color: var(--red); }
+      .message.success { background: var(--mint); color: var(--green-dark); }
+      .subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 0 18px; }
+      .quiet { color: var(--muted); font: 12px/1.4 Arial, sans-serif; }
+      .quiet.warning { color: var(--amber); }
+      .hidden { display: none !important; }
+      .amount { font-variant-numeric: tabular-nums; }
+      @keyframes arrive { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+      @media (max-width: 540px) {
+        .shell { width: min(100% - 22px, 760px); padding-top: 18px; }
+        .grid, .employee-strip { grid-template-columns: 1fr; }
+        .panel { padding: 22px 18px; }
+        .subhead { align-items: flex-start; flex-direction: column; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; } }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="masthead"><img class="mark" src="data:image/png;base64,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" alt="Indorama company logo"><div class="brand">Employee Services</div></div>
+      <section id="loginPanel" class="panel hidden">
+        <h1>Airtime &amp; data claim</h1>
+        <p class="intro">Enter your Employee ID to receive a sign-in code at your company email.</p>
+        <div id="loginMessage" class="message" role="status"></div>
+        <form id="loginForm">
+          <div class="field"><label for="loginEmployeeId">Employee ID</label><input id="loginEmployeeId" name="employeeId" autocomplete="username" required></div>
+          <button id="requestCodeButton" class="button" type="button">Send sign-in code</button>
+          <div id="loginCodeField" class="field hidden" style="margin-top:18px">
+            <label for="loginCode">Six-digit sign-in code</label>
+            <input id="loginCode" name="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000">
+          </div>
+          <button id="verifyCodeButton" class="button hidden" type="submit" disabled>Verify code</button>
+        </form>
+      </section>
+
+      <section id="claimPanel" class="panel hidden">
+        <div class="subhead"><div><h1>New expense claim</h1><p class="intro" style="margin:6px 0 0">Airtime and mobile data</p></div><button id="logoutButton" type="button" class="button secondary">Sign out</button></div>
+        <div id="claimMessage" class="message" role="status"></div>
+        <div id="employeeDetails" class="employee-strip"></div>
+        <form id="claimForm">
+          <input id="claimSessionToken" name="sessionToken" type="hidden">
+          <div id="claimForField" class="field">
+            <label for="claimFor">Claim submission type</label>
+            <select id="claimFor" name="employeeId">
+              <option value="">My own claim</option>
+            </select>
+            <p id="claimForHelp" class="quiet"></p>
+          </div>
+          <div class="field"><label for="period">Claim period</label><input id="period" name="period" type="month" required></div>
+          <div class="grid">
+            <div class="field"><label for="airtime">Airtime claimed (NGN)</label><input id="airtime" name="airtime" type="number" min="0" step="0.01" inputmode="decimal" value="0" required></div>
+            <div class="field"><label for="data">Data claimed (NGN)</label><input id="data" name="data" type="number" min="0" step="0.01" inputmode="decimal" value="0" required></div>
+          </div>
+          <div id="eligibility" class="rate hidden" aria-live="polite"></div>
+          <div class="field"><label for="justification">Justification</label><textarea id="justification" name="justification" maxlength="1000" required></textarea></div>
+          <div class="field">
+            <label for="receipt">Receipt evidence (PDF, JPEG, or PNG)</label>
+            <input id="receipt" name="receipt" type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" required>
+            <p class="quiet">Attach the receipt for the airtime or data purchase. Maximum file size: 10 MB.</p>
+          </div>
+          <button id="submitClaim" class="button" type="submit" disabled>Submit claim</button>
+        </form>
+      </section>
+
+      <section id="decisionPanel" class="panel hidden">
+        <h1 id="decisionTitle">Claim decision</h1>
+        <p id="decisionIntro" class="intro">Review the claim details before recording your decision.</p>
+        <div id="decisionMessage" class="message" role="status"></div>
+        <div id="decisionDetails" class="employee-strip"></div>
+        <div class="field"><label for="comment">Comment <span class="quiet">(optional)</span></label><textarea id="comment" maxlength="1000"></textarea></div>
+        <div class="actions"><button id="decisionButton" class="button" type="button"></button><button id="cancelDecision" class="button secondary" type="button">Cancel</button></div>
+      </section>
+    </main>
+    <script>
+      const INITIAL_DECISION = <?!= initialDecision ?>;
+      const INITIAL_DECISION_INFO = <?!= initialDecisionInfo ?>;
+      const INITIAL_DECISION_ERROR = <?!= initialDecisionError ?>;
+      const SESSION_KEY = 'airtimeClaimSession';
+      let session = null;
+      let eligibilityReady = false;
+      let decision = null;
+      let managedEmployees = null;
+
+      function callServer(method, ...args) {
+        return new Promise((resolve, reject) => {
+          google.script.run
+            .withSuccessHandler(result => {
+              if (result == null) {
+                const message = method === 'submitDecision'
+                  ? 'The server did not confirm this decision. Check the Claims Tracker before retrying; the decision may already have been recorded.'
+                  : 'The server returned no response for ' + method + '. No decision was submitted.';
+                reject(new Error(message));
+                return;
+              }
+              resolve(result);
+            })
+            .withFailureHandler(error => reject(new Error(error.message || 'Request failed.')))[method](...args);
+        });
+      }
+
+      function showMessage(element, text, kind) {
+        element.textContent = text;
+        element.className = 'message show ' + kind;
+      }
+
+      function setBusy(button, busy, text) {
+        button.disabled = busy;
+        if (text) button.textContent = busy ? 'Please wait…' : text;
+      }
+
+      function money(value) {
+        if (typeof value === 'string') return value;
+        return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(Number(value || 0));
+      }
+
+      function addDetail(container, label, value) {
+        const item = document.createElement('div');
+        item.className = 'employee-item';
+        const heading = document.createElement('span');
+        heading.textContent = label;
+        const content = document.createElement('strong');
+        content.textContent = value == null || value === '' ? 'Not recorded' : value;
+        item.append(heading, content);
+        container.append(item);
+      }
+
+      function renderEmployee(employee) {
+        const container = document.getElementById('employeeDetails');
+        container.replaceChildren();
+        addDetail(container, 'Employee', employee.name + ' · ' + employee.employeeId);
+        addDetail(container, 'Department', employee.department);
+        addDetail(container, 'Grade / designation', employee.grade + ' · ' + employee.designation);
+        addDetail(container, 'Reporting supervisor', employee.supervisor);
+      }
+
+      function selectedClaimEmployee() {
+        const employeeId = document.getElementById('claimFor').value;
+        return employeeId
+          ? managedEmployees.find(employee => String(employee.employeeId).trim().toUpperCase() === employeeId.trim().toUpperCase()) || session.employee
+          : session.employee;
+      }
+
+      async function loadManagedEmployees() {
+        if (managedEmployees !== null) return;
+        const options = await callServer('getManagerClaimOptions', session.token);
+        managedEmployees = options.employees;
+        const selector = document.getElementById('claimFor');
+        selector.replaceChildren(new Option('My own claim', ''));
+        managedEmployees.forEach(employee => selector.add(new Option(employee.name + ' · ' + employee.employeeId + ' (on behalf)', employee.employeeId)));
+        selector.disabled = !options.enabled;
+        const help = document.getElementById('claimForHelp');
+        help.textContent = options.message;
+        help.className = 'quiet' + (!options.enabled || managedEmployees.length === 0 ? ' warning' : '');
+      }
+
+      function showLogin() {
+        document.getElementById('loginPanel').classList.remove('hidden');
+        document.getElementById('claimPanel').classList.add('hidden');
+      }
+
+      async function showClaim() {
+        document.getElementById('loginPanel').classList.add('hidden');
+        document.getElementById('claimPanel').classList.remove('hidden');
+        document.getElementById('claimSessionToken').value = session.token;
+        await loadManagedEmployees();
+        renderEmployee(selectedClaimEmployee());
+        const now = new Date();
+        document.getElementById('period').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        refreshEligibility();
+      }
+
+      async function refreshEligibility() {
+        eligibilityReady = false;
+        document.getElementById('submitClaim').disabled = true;
+        const box = document.getElementById('eligibility');
+        const airtime = document.getElementById('airtime').value;
+        const data = document.getElementById('data').value;
+        if (airtime === '' || data === '' || Number(airtime) < 0 || Number(data) < 0) {
+          box.className = 'rate error';
+          box.textContent = 'Enter non-negative amounts to check the approved rate.';
+          return;
+        }
+        box.className = 'rate';
+        box.textContent = 'Checking approved rate…';
+        try {
+          const targetEmployeeId = document.getElementById('claimFor').value;
+          const result = await callServer('getEligibility', session.token, airtime, data, targetEmployeeId);
+          const rate = result.eligibility;
+          box.className = 'rate' + (rate.needsManualReview ? ' warning' : (rate.eligible === false ? ' error' : ''));
+          box.textContent = rate.needsManualReview
+            ? rate.message + ' Total claimed: ' + money(rate.total) + '.'
+            : 'Airtime cap: ' + money(rate.airtimeLimit) + '; claimed: ' + money(airtime) + '. Data cap: ' + money(rate.dataLimit) + '; claimed: ' + money(data) + '. ' + rate.message;
+          eligibilityReady = rate.configured && (rate.needsManualReview || rate.eligible !== false);
+          document.getElementById('submitClaim').disabled = !eligibilityReady;
+        } catch (error) {
+          box.className = 'rate error';
+          box.textContent = error.message;
+        }
+      }
+
+      async function loadDecision() {
+        document.getElementById('decisionPanel').classList.remove('hidden');
+        document.getElementById('loginPanel').classList.add('hidden');
+        document.getElementById('claimPanel').classList.add('hidden');
+        try {
+          if (INITIAL_DECISION_ERROR) throw new Error(INITIAL_DECISION_ERROR);
+          decision = INITIAL_DECISION_INFO;
+          if (!decision) throw new Error('Claim details could not be loaded. No decision has been recorded. Contact HR for help.');
+          if (decision.alreadyActioned) {
+            showMessage(document.getElementById('decisionMessage'), 'This claim has already been actioned. No changes were made.', 'success');
+            document.getElementById('decisionIntro').classList.add('hidden');
+            document.getElementById('decisionDetails').classList.add('hidden');
+            document.getElementById('comment').parentElement.classList.add('hidden');
+            document.querySelector('#decisionPanel .actions').classList.add('hidden');
+            return;
+          }
+          const claim = decision.claim;
+          const details = document.getElementById('decisionDetails');
+          details.replaceChildren();
+          addDetail(details, 'Employee', claim.employeeName + ' · ' + claim.employeeId);
+          addDetail(details, 'Department / grade', claim.department + ' · ' + claim.grade);
+          addDetail(details, 'Claim period', claim.period);
+          addDetail(details, 'Airtime / data', money(claim.airtime) + ' / ' + money(claim.data));
+          addDetail(details, 'Total claimed', money(claim.total));
+          addDetail(details, claim.manualReview ? 'Rate review' : 'Approved limit', claim.manualReview ? 'Needs Manual Review' : money(claim.approvedLimit));
+          addDetail(details, 'Recommended amount', money(claim.recommended));
+          if (claim.submittedByEmployeeId && String(claim.submittedByEmployeeId).trim().toUpperCase() !== String(claim.employeeId).trim().toUpperCase()) {
+            addDetail(details, 'Submitted by manager', claim.submittedByName + ' · ' + claim.submittedByEmployeeId);
+          }
+          addDetail(details, 'Justification', claim.justification);
+          document.getElementById('decisionTitle').textContent = decision.stage === 'supervisor' ? 'Supervisor decision' : 'HR verification';
+          document.getElementById('decisionButton').textContent = ({ approve: 'Approve claim', decline: 'Decline claim', verify: 'Verify claim', reject: 'Reject claim' })[decision.action];
+        } catch (error) {
+          showMessage(document.getElementById('decisionMessage'), error.message, 'error');
+          document.getElementById('decisionIntro').classList.add('hidden');
+          document.getElementById('decisionDetails').classList.add('hidden');
+          document.getElementById('comment').parentElement.classList.add('hidden');
+          document.querySelector('#decisionPanel .actions').classList.add('hidden');
+        }
+      }
+
+      document.getElementById('requestCodeButton').addEventListener('click', async event => {
+        const button = event.currentTarget;
+        const employeeIdInput = document.getElementById('loginEmployeeId');
+        const employeeId = employeeIdInput.value.trim();
+        if (!employeeIdInput.reportValidity()) return;
+        setBusy(button, true, 'Send sign-in code');
+        try {
+          const result = await callServer('sendLoginCode', employeeId);
+          document.getElementById('loginCodeField').classList.remove('hidden');
+          document.getElementById('loginCode').required = true;
+          document.getElementById('verifyCodeButton').classList.remove('hidden');
+          document.getElementById('verifyCodeButton').disabled = false;
+          showMessage(document.getElementById('loginMessage'), result.message, 'success');
+        } catch (error) {
+          showMessage(document.getElementById('loginMessage'), error.message, 'error');
+        } finally {
+          setBusy(button, false, 'Send sign-in code');
+        }
+      });
+
+      document.getElementById('loginEmployeeId').addEventListener('input', () => {
+        document.getElementById('loginCodeField').classList.add('hidden');
+        document.getElementById('loginCode').required = false;
+        document.getElementById('loginCode').value = '';
+        document.getElementById('verifyCodeButton').classList.add('hidden');
+        document.getElementById('verifyCodeButton').disabled = true;
+      });
+
+      document.getElementById('loginForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        const button = document.getElementById('verifyCodeButton');
+        setBusy(button, true, 'Verify code');
+        try {
+          session = await callServer('verifyLoginCode', document.getElementById('loginEmployeeId').value, document.getElementById('loginCode').value);
+          await showClaim();
+        } catch (error) {
+          showMessage(document.getElementById('loginMessage'), error.message, 'error');
+        } finally {
+          setBusy(button, false, 'Verify code');
+        }
+      });
+
+      ['airtime', 'data'].forEach(id => document.getElementById(id).addEventListener('input', refreshEligibility));
+      document.getElementById('claimFor').addEventListener('change', () => {
+        const selectedEmployee = selectedClaimEmployee();
+        renderEmployee(selectedEmployee);
+        refreshEligibility();
+      });
+
+      document.getElementById('claimForm').addEventListener('submit', async event => {
+        event.preventDefault();
+        if (!eligibilityReady) return;
+        const button = document.getElementById('submitClaim');
+        setBusy(button, true, 'Submit claim');
+        try {
+          const result = await callServer('submitClaim', document.getElementById('claimForm'));
+          setBusy(button, false, 'Submit claim');
+          showMessage(document.getElementById('claimMessage'), result.notificationSent
+            ? (result.onBehalf ? 'Claim ' + result.claimId + ' for ' + result.employeeName + ' submitted directly to HR.' : 'Claim ' + result.claimId + ' submitted. Your supervisor has been notified.')
+            : 'Claim ' + result.claimId + ' was saved, but an email could not be delivered. Contact HR.', result.notificationSent ? 'success' : 'error');
+          document.getElementById('claimForm').reset();
+          await showClaim();
+        } catch (error) {
+          showMessage(document.getElementById('claimMessage'), error.message, 'error');
+          setBusy(button, false, 'Submit claim');
+          button.disabled = !eligibilityReady;
+        }
+      });
+
+      document.getElementById('logoutButton').addEventListener('click', () => {
+        session = null;
+        managedEmployees = null;
+        document.getElementById('claimForm').reset();
+        showLogin();
+      });
+
+      document.getElementById('decisionButton').addEventListener('click', async () => {
+        const button = document.getElementById('decisionButton');
+        setBusy(button, true, 'Submit decision');
+        try {
+          const result = await callServer('submitDecision', INITIAL_DECISION.token, decision.action, document.getElementById('comment').value);
+          showMessage(document.getElementById('decisionMessage'), result.alreadyActioned
+            ? 'This claim was already actioned. No changes were made.'
+            : 'Decision recorded: ' + result.status + '.' + (result.notificationSent ? '' : ' An email could not be delivered; contact HR.'), result.notificationSent === false ? 'error' : 'success');
+          document.querySelector('#decisionPanel .actions').classList.add('hidden');
+        } catch (error) {
+          showMessage(document.getElementById('decisionMessage'), error.message, 'error');
+          setBusy(button, false, ({ approve: 'Approve claim', decline: 'Decline claim', verify: 'Verify claim', reject: 'Reject claim' })[decision.action]);
+        }
+      });
+
+      document.getElementById('cancelDecision').addEventListener('click', () => {
+        document.getElementById('decisionPanel').classList.add('hidden');
+        document.getElementById('loginPanel').classList.remove('hidden');
+      });
+
+      if (INITIAL_DECISION.token) {
+        loadDecision();
+      } else {
+        showLogin();
+      }
+    </script>
+  </body>
+</html>
