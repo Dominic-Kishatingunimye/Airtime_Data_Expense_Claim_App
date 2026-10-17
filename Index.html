@@ -22,9 +22,10 @@
       }
       * { box-sizing: border-box; }
       body { margin: 0; min-height: 100vh; background: linear-gradient(135deg, #f4f5ef, #edf3ed 55%, #f5f0e5); color: var(--ink); font: 16px/1.5 Georgia, 'Times New Roman', serif; }
-      button, input, textarea { font: inherit; }
+      button, input, textarea, select { font: inherit; }
       button { cursor: pointer; }
       .shell { width: min(100% - 32px, 760px); margin: 0 auto; padding: 30px 0 56px; }
+      .shell.wide { width: min(100% - 32px, 1100px); }
       .masthead { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; color: var(--green-dark); }
       .mark { display: block; width: 188px; height: 38px; object-fit: contain; }
       .brand { font: 700 12px/1.2 Arial, sans-serif; letter-spacing: 1.1px; text-transform: uppercase; }
@@ -33,8 +34,8 @@
       .intro { margin: 0 0 28px; color: var(--muted); }
       h2 { margin: 0; font-size: 20px; font-weight: 500; }
       label { display: block; margin: 0 0 7px; font: 700 12px/1.3 Arial, sans-serif; letter-spacing: .25px; }
-      input, textarea { width: 100%; padding: 11px 12px; border: 1px solid #cbd5ce; border-radius: 3px; background: #fff; color: var(--ink); }
-      input:focus, textarea:focus { outline: 2px solid #79a99a; outline-offset: 1px; }
+      input, textarea, select { width: 100%; padding: 11px 12px; border: 1px solid #cbd5ce; border-radius: 3px; background: #fff; color: var(--ink); }
+      input:focus, textarea:focus, select:focus { outline: 2px solid #79a99a; outline-offset: 1px; }
       input[readonly] { background: #f4f6f3; color: #53605b; }
       textarea { min-height: 96px; resize: vertical; }
       .field { margin-bottom: 18px; }
@@ -60,6 +61,17 @@
       .quiet.warning { color: var(--amber); }
       .hidden { display: none !important; }
       .amount { font-variant-numeric: tabular-nums; }
+      .nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+      .nav:empty { display: none; }
+      .section-gap { margin: 28px 0 0; }
+      .table-wrap { overflow-x: auto; margin: 12px 0 8px; }
+      table { width: 100%; border-collapse: collapse; font: 14px/1.4 Arial, sans-serif; }
+      th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+      th { color: var(--muted); font: 700 10px/1.3 Arial, sans-serif; letter-spacing: .4px; text-transform: uppercase; }
+      .stack { display: flex; flex-direction: column; gap: 8px; }
+      .stack .button { width: 100%; }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 99px; background: var(--amber-bg); color: var(--amber); font: 700 11px/1.4 Arial, sans-serif; white-space: nowrap; }
+      .pill.done { background: var(--mint); color: var(--green-dark); }
       @keyframes arrive { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
       @media (max-width: 540px) {
         .shell { width: min(100% - 22px, 760px); padding-top: 18px; }
@@ -90,6 +102,7 @@
 
       <section id="claimPanel" class="panel hidden">
         <div class="subhead"><div><h1>New expense claim</h1><p class="intro" style="margin:6px 0 0">Airtime and mobile data</p></div><button id="logoutButton" type="button" class="button secondary">Sign out</button></div>
+        <div id="claimLinks" class="nav"></div>
         <div id="claimMessage" class="message" role="status"></div>
         <div id="employeeDetails" class="employee-strip"></div>
         <form id="claimForm">
@@ -117,6 +130,25 @@
         </form>
       </section>
 
+      <section id="reimbursementPanel" class="panel hidden">
+        <div class="subhead"><div><h1>Reimbursements</h1><p id="reimbursementIntro" class="intro" style="margin:6px 0 0"></p></div><button id="reimbursementLogout" type="button" class="button secondary">Sign out</button></div>
+        <div id="reimbursementNav" class="nav"></div>
+        <div id="reimbursementMessage" class="message" role="status"></div>
+        <div class="field"><label for="reimbursementFilter">Find a claim</label><input id="reimbursementFilter" type="search" placeholder="Name, employee ID, or month"></div>
+        <h2 id="awaitingHeading">Awaiting reimbursement</h2>
+        <div id="awaitingClaims"></div>
+        <h2 id="reimbursedHeading" class="section-gap">Already reimbursed</h2>
+        <div id="reimbursedClaims"></div>
+      </section>
+
+      <section id="adminPanel" class="panel hidden">
+        <div class="subhead"><div><h1>People and roles</h1><p id="adminIntro" class="intro" style="margin:6px 0 0"></p></div><button id="adminLogout" type="button" class="button secondary">Sign out</button></div>
+        <div id="adminNav" class="nav"></div>
+        <div id="adminMessage" class="message" role="status"></div>
+        <div class="field"><label for="userFilter">Find a person</label><input id="userFilter" type="search" placeholder="Name, employee ID, or department"></div>
+        <div id="userList"></div>
+      </section>
+
       <section id="decisionPanel" class="panel hidden">
         <h1 id="decisionTitle">Claim decision</h1>
         <p id="decisionIntro" class="intro">Review the claim details before recording your decision.</p>
@@ -135,6 +167,8 @@
       let eligibilityReady = false;
       let decision = null;
       let managedEmployees = null;
+      let reimbursementQueue = { awaiting: [], reimbursed: [] };
+      let registeredUsers = [];
 
       function callServer(method, ...args) {
         return new Promise((resolve, reject) => {
@@ -208,20 +242,285 @@
         help.className = 'quiet' + (!options.enabled || managedEmployees.length === 0 ? ' warning' : '');
       }
 
+      function el(tag, className, text) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (text != null) node.textContent = text;
+        return node;
+      }
+
+      function hideAppPanels() {
+        ['loginPanel', 'claimPanel', 'reimbursementPanel', 'adminPanel', 'decisionPanel'].forEach(id => {
+          document.getElementById(id).classList.add('hidden');
+        });
+      }
+
+      function signedInLabel() {
+        return 'Signed in as ' + session.employee.name + ' · ' + (session.employee.role || 'Employee');
+      }
+
+      function todayInputValue() {
+        const now = new Date();
+        return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+      }
+
+      function signOut() {
+        session = null;
+        managedEmployees = null;
+        reimbursementQueue = { awaiting: [], reimbursed: [] };
+        registeredUsers = [];
+        document.getElementById('claimForm').reset();
+        document.querySelector('.shell').classList.remove('wide');
+        showLogin();
+      }
+
+      function navButton(label, action, active) {
+        const button = el('button', 'button' + (active ? '' : ' secondary'), label);
+        button.type = 'button';
+        button.addEventListener('click', () => { if (!active) action(); });
+        return button;
+      }
+
+      function renderRoleNav(container, active) {
+        container.replaceChildren();
+        if (!session || session.employee.role === 'Employee') return;
+        if (session.employee.role === 'Admin') container.append(navButton('People', showAdmin, active === 'admin'));
+        if (session.employee.role === 'Admin' || session.employee.role === 'Account Officer') {
+          container.append(navButton('Reimbursements', showReimbursements, active === 'reimbursements'));
+        }
+        container.append(navButton('My claim', showClaim, active === 'claim'));
+      }
+
       function showLogin() {
+        hideAppPanels();
+        document.querySelector('.shell').classList.remove('wide');
         document.getElementById('loginPanel').classList.remove('hidden');
-        document.getElementById('claimPanel').classList.add('hidden');
+      }
+
+      async function showHome() {
+        const role = session.employee.role || 'Employee';
+        if (role === 'Admin') return showAdmin();
+        if (role === 'Account Officer') return showReimbursements();
+        return showClaim();
       }
 
       async function showClaim() {
-        document.getElementById('loginPanel').classList.add('hidden');
+        hideAppPanels();
+        document.querySelector('.shell').classList.remove('wide');
         document.getElementById('claimPanel').classList.remove('hidden');
+        renderRoleNav(document.getElementById('claimLinks'), 'claim');
         document.getElementById('claimSessionToken').value = session.token;
         await loadManagedEmployees();
         renderEmployee(selectedClaimEmployee());
-        const now = new Date();
-        document.getElementById('period').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        const periodInput = document.getElementById('period');
+        if (!periodInput.value) {
+          const now = new Date();
+          periodInput.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+        }
         refreshEligibility();
+      }
+
+      function claimMatches(claim, query) {
+        const haystack = [claim.employeeName, claim.employeeId, claim.periodLabel, claim.department, claim.grade].join(' ').toLowerCase();
+        return haystack.indexOf(query) >= 0;
+      }
+
+      function renderClaimTable(claims, emptyText, awaiting) {
+        if (!claims.length) return el('p', 'quiet', emptyText);
+        const headers = awaiting
+          ? ['Employee', 'Period', 'Claimed', 'To reimburse', 'Update tracker']
+          : ['Employee', 'Period', 'Reimbursed', 'Payment date', 'Recorded by'];
+        const rows = claims.map(claim => {
+          const person = el('div');
+          person.append(el('strong', '', claim.employeeName || 'Unnamed employee'));
+          person.append(el('div', 'quiet', claim.employeeId + (claim.department ? ' · ' + claim.department : '')));
+          const claimed = 'Airtime ' + money(claim.airtime) + '\nData ' + money(claim.data) + '\nTotal ' + money(claim.total);
+          if (awaiting) return [person, claim.periodLabel, claimed, money(claim.recommended), reimbursementActions(claim)];
+          const recorded = el('div');
+          recorded.append(el('span', 'pill done', 'Reimbursed'));
+          recorded.append(el('div', 'quiet', claim.reimbursedBy || 'Claims Tracker'));
+          if (claim.note) recorded.append(el('div', '', claim.note));
+          return [person, claim.periodLabel, money(claim.recommended), claim.paymentDate || 'Not recorded', recorded];
+        });
+        return dataTable(headers, rows);
+      }
+
+      function dataTable(headers, rows) {
+        const wrap = el('div', 'table-wrap');
+        const table = document.createElement('table');
+        const head = document.createElement('tr');
+        headers.forEach(header => head.append(el('th', '', header)));
+        const thead = document.createElement('thead');
+        thead.append(head);
+        const tbody = document.createElement('tbody');
+        rows.forEach(cells => {
+          const row = document.createElement('tr');
+          cells.forEach(cell => {
+            const td = document.createElement('td');
+            if (cell instanceof Node) td.append(cell);
+            else {
+              td.style.whiteSpace = 'pre-line';
+              td.textContent = cell == null ? '' : String(cell);
+            }
+            row.append(td);
+          });
+          tbody.append(row);
+        });
+        table.append(thead, tbody);
+        wrap.append(table);
+        return wrap;
+      }
+
+      function reimbursementActions(claim) {
+        const box = el('div', 'stack');
+        const date = document.createElement('input');
+        date.type = 'date';
+        date.value = todayInputValue();
+        date.max = todayInputValue();
+        date.setAttribute('aria-label', 'Reimbursement date for ' + claim.employeeName);
+        const note = document.createElement('input');
+        note.type = 'text';
+        note.maxLength = 500;
+        note.placeholder = 'Note (optional)';
+        note.setAttribute('aria-label', 'Reimbursement note for ' + claim.employeeName);
+        const mark = el('button', 'button', 'Mark reimbursed');
+        mark.type = 'button';
+        mark.addEventListener('click', () => markReimbursed(claim, date, note, mark));
+        box.append(date, note, mark);
+        if (claim.hasReceipt) {
+          const receipt = el('button', 'button secondary', 'View receipt');
+          receipt.type = 'button';
+          receipt.addEventListener('click', () => openReceipt(claim, receipt));
+          box.append(receipt);
+        }
+        return box;
+      }
+
+      function renderReimbursementTables() {
+        const query = document.getElementById('reimbursementFilter').value.trim().toLowerCase();
+        const awaiting = reimbursementQueue.awaiting.filter(claim => claimMatches(claim, query));
+        const reimbursed = reimbursementQueue.reimbursed.filter(claim => claimMatches(claim, query));
+        document.getElementById('awaitingHeading').textContent = 'Awaiting reimbursement (' + awaiting.length + ')';
+        document.getElementById('reimbursedHeading').textContent = 'Already reimbursed (' + reimbursed.length + ')';
+        const awaitingEmpty = query ? 'No waiting claims match that search.' : 'No claims are waiting for reimbursement.';
+        const reimbursedEmpty = query ? 'No reimbursed claims match that search.' : 'No reimbursed claims are recorded yet.';
+        const awaitingHost = document.getElementById('awaitingClaims');
+        const reimbursedHost = document.getElementById('reimbursedClaims');
+        awaitingHost.replaceChildren(renderClaimTable(awaiting, awaitingEmpty, true));
+        reimbursedHost.replaceChildren(renderClaimTable(reimbursed, reimbursedEmpty, false));
+      }
+
+      async function showReimbursements() {
+        hideAppPanels();
+        document.querySelector('.shell').classList.add('wide');
+        document.getElementById('reimbursementPanel').classList.remove('hidden');
+        renderRoleNav(document.getElementById('reimbursementNav'), 'reimbursements');
+        document.getElementById('reimbursementIntro').textContent = signedInLabel() + '. Mark an HR-verified claim as reimbursed. The Claims Tracker records the payment date, Finance Status, and Overall Status, then the employee is emailed.';
+        document.getElementById('reimbursementMessage').className = 'message';
+        document.getElementById('awaitingClaims').textContent = 'Loading claims…';
+        document.getElementById('reimbursedClaims').replaceChildren();
+        try {
+          reimbursementQueue = await callServer('listReimbursementQueue', session.token);
+          renderReimbursementTables();
+        } catch (error) {
+          document.getElementById('awaitingClaims').textContent = '';
+          showMessage(document.getElementById('reimbursementMessage'), error.message, 'error');
+        }
+      }
+
+      async function markReimbursed(claim, dateInput, noteInput, button) {
+        setBusy(button, true, 'Mark reimbursed');
+        try {
+          const result = await callServer('markClaimReimbursed', session.token, claim.claimId, dateInput.value, noteInput.value);
+          showMessage(document.getElementById('reimbursementMessage'), result.notificationSent
+            ? 'Claim for ' + claim.employeeName + ' was marked reimbursed.'
+            : 'Claim for ' + claim.employeeName + ' was marked reimbursed, but the employee email could not be delivered.', result.notificationSent ? 'success' : 'error');
+          try {
+            reimbursementQueue = await callServer('listReimbursementQueue', session.token);
+            renderReimbursementTables();
+          } catch (reloadError) {
+            showMessage(document.getElementById('reimbursementMessage'), 'The claim was marked reimbursed. Reload this page to refresh the list.', 'success');
+          }
+          return;
+        } catch (error) {
+          showMessage(document.getElementById('reimbursementMessage'), error.message, 'error');
+          setBusy(button, false, 'Mark reimbursed');
+        }
+      }
+
+      async function openReceipt(claim, button) {
+        setBusy(button, true, 'View receipt');
+        try {
+          const result = await callServer('openClaimReceipt', session.token, claim.claimId);
+          window.open(result.url, '_blank', 'noopener');
+        } catch (error) {
+          showMessage(document.getElementById('reimbursementMessage'), error.message, 'error');
+        } finally {
+          setBusy(button, false, 'View receipt');
+        }
+      }
+
+      function userMatches(user, query) {
+        return [user.name, user.employeeId, user.email, user.department, user.role].join(' ').toLowerCase().indexOf(query) >= 0;
+      }
+
+      function renderUserTable() {
+        const query = document.getElementById('userFilter').value.trim().toLowerCase();
+        const users = registeredUsers.filter(user => userMatches(user, query));
+        const host = document.getElementById('userList');
+        if (!users.length) {
+          host.replaceChildren(el('p', 'quiet', query ? 'No people match that search.' : 'No employees are registered yet.'));
+          return;
+        }
+        host.replaceChildren(dataTable(['Person', 'Department', 'Role', ''], users.map(user => {
+          const person = el('div');
+          person.append(el('strong', '', user.name || 'Unnamed employee'));
+          person.append(el('div', 'quiet', user.employeeId + (user.active ? '' : ' · Inactive')));
+          const select = document.createElement('select');
+          select.setAttribute('aria-label', 'Role for ' + (user.name || user.employeeId));
+          ['Employee', 'Account Officer', 'Admin'].forEach(role => select.add(new Option(role, role, false, role === user.role)));
+          const save = el('button', 'button', 'Save role');
+          save.type = 'button';
+          save.addEventListener('click', () => saveUserRole(user, select, save));
+          return [person, user.department || 'Not recorded', select, save];
+        })));
+      }
+
+      async function showAdmin() {
+        hideAppPanels();
+        document.querySelector('.shell').classList.add('wide');
+        document.getElementById('adminPanel').classList.remove('hidden');
+        renderRoleNav(document.getElementById('adminNav'), 'admin');
+        document.getElementById('adminIntro').textContent = signedInLabel() + '. Employees submit claims. Account officers mark verified claims as reimbursed. Admins assign these roles.';
+        document.getElementById('adminMessage').className = 'message';
+        document.getElementById('userList').textContent = 'Loading people…';
+        try {
+          const result = await callServer('listRegisteredUsers', session.token);
+          registeredUsers = result.users;
+          renderUserTable();
+        } catch (error) {
+          document.getElementById('userList').textContent = '';
+          showMessage(document.getElementById('adminMessage'), error.message, 'error');
+        }
+      }
+
+      async function saveUserRole(user, select, button) {
+        setBusy(button, true, 'Save role');
+        try {
+          const result = await callServer('setRegisteredUserRole', session.token, user.employeeId, select.value);
+          user.role = result.role;
+          const samePerson = String(session.employee.employeeId).trim().toUpperCase() === String(user.employeeId).trim().toUpperCase();
+          if (samePerson) session.employee.role = result.actorRole || result.role;
+          showMessage(document.getElementById('adminMessage'), user.name + ' is now ' + result.role + '.', 'success');
+          if (samePerson && session.employee.role !== 'Admin') {
+            await showHome();
+            return;
+          }
+          renderUserTable();
+        } catch (error) {
+          showMessage(document.getElementById('adminMessage'), error.message, 'error');
+          setBusy(button, false, 'Save role');
+        }
       }
 
       async function refreshEligibility() {
@@ -239,7 +538,13 @@
         box.textContent = 'Checking approved rate…';
         try {
           const targetEmployeeId = document.getElementById('claimFor').value;
-          const result = await callServer('getEligibility', session.token, airtime, data, targetEmployeeId);
+          const period = document.getElementById('period').value;
+          const result = await callServer('getEligibility', session.token, airtime, data, targetEmployeeId, period);
+          if (result.periodStatus && result.periodStatus.blocked) {
+            box.className = 'rate error';
+            box.textContent = result.periodStatus.message;
+            return;
+          }
           const rate = result.eligibility;
           box.className = 'rate' + (rate.needsManualReview ? ' warning' : (rate.eligible === false ? ' error' : ''));
           box.textContent = rate.needsManualReview
@@ -254,9 +559,9 @@
       }
 
       async function loadDecision() {
+        hideAppPanels();
+        document.querySelector('.shell').classList.remove('wide');
         document.getElementById('decisionPanel').classList.remove('hidden');
-        document.getElementById('loginPanel').classList.add('hidden');
-        document.getElementById('claimPanel').classList.add('hidden');
         try {
           if (INITIAL_DECISION_ERROR) throw new Error(INITIAL_DECISION_ERROR);
           decision = INITIAL_DECISION_INFO;
@@ -328,7 +633,7 @@
         setBusy(button, true, 'Verify code');
         try {
           session = await callServer('verifyLoginCode', document.getElementById('loginEmployeeId').value, document.getElementById('loginCode').value);
-          await showClaim();
+          await showHome();
         } catch (error) {
           showMessage(document.getElementById('loginMessage'), error.message, 'error');
         } finally {
@@ -337,6 +642,7 @@
       });
 
       ['airtime', 'data'].forEach(id => document.getElementById(id).addEventListener('input', refreshEligibility));
+      document.getElementById('period').addEventListener('change', refreshEligibility);
       document.getElementById('claimFor').addEventListener('change', () => {
         const selectedEmployee = selectedClaimEmployee();
         renderEmployee(selectedEmployee);
@@ -363,12 +669,11 @@
         }
       });
 
-      document.getElementById('logoutButton').addEventListener('click', () => {
-        session = null;
-        managedEmployees = null;
-        document.getElementById('claimForm').reset();
-        showLogin();
-      });
+      document.getElementById('logoutButton').addEventListener('click', signOut);
+      document.getElementById('reimbursementLogout').addEventListener('click', signOut);
+      document.getElementById('adminLogout').addEventListener('click', signOut);
+      document.getElementById('reimbursementFilter').addEventListener('input', renderReimbursementTables);
+      document.getElementById('userFilter').addEventListener('input', renderUserTable);
 
       document.getElementById('decisionButton').addEventListener('click', async () => {
         const button = document.getElementById('decisionButton');

@@ -6,7 +6,7 @@ const SHEETS = {
 };
 
 const HEADERS = {
-  employees: ['Employee ID', 'Full Name', 'Email', 'Department', 'Grade', 'Designation', 'Supervisor Name', 'Supervisor Email', 'Active'],
+  employees: ['Employee ID', 'Full Name', 'Email', 'Department', 'Grade', 'Designation', 'Supervisor Name', 'Supervisor Email', 'Active', 'Role'],
   rates: ['Grade Code', 'Designation Examples', 'Airtime Limit (NGN)', 'Data Limit (NGN)', 'Has Fixed Cap (Y/N)', 'Notes'],
   claims: [
     'Claim ID', 'S/N', 'Submitted At', 'Employee ID', 'Employee Name', 'Employee Email', 'Department', 'Grade', 'Designation',
@@ -15,12 +15,13 @@ const HEADERS = {
     'HOD Status', 'HOD Comment', 'HOD Decision Timestamp', 'HOD Token Hash', 'HOD Token Used', 'HR Status', 'HR Comment',
     'HR Decision Timestamp', 'HR Token Hash', 'HR Token Used', 'Finance Status', 'Payment Date', 'Overall Status', 'Remarks',
     'Submitted By Employee ID', 'Submitted By Name', 'Submitted By Email',
-    'Evidence File ID', 'Evidence File Name', 'Evidence URL'
+    'Evidence File ID', 'Evidence File Name', 'Evidence URL',
+    'Reimbursed By Employee ID', 'Reimbursed By Name', 'Reimbursement Note'
   ],
   config: ['Key', 'Value']
 };
 
-const ACTIVE_CLAIM_STATUSES = ['Pending Supervisor', 'Pending HR', 'Verified - Awaiting Payment', 'Rejected', 'Paid'];
+const RESUBMITTABLE_CLAIM_STATUSES = ['declined', 'rejected'];
 const SESSION_TTL_SECONDS = 21600;
 const LOGIN_CODE_TTL_SECONDS = 300;
 const LOGIN_CODE_MAX_ATTEMPTS = 5;
@@ -59,10 +60,11 @@ function setupApplication() {
     ensureSheet_(spreadsheet, SHEETS[key], HEADERS[key]);
   });
   ensureHeaders_(spreadsheet.getSheetByName(SHEETS.claims), HEADERS.claims);
+  ensureHeaders_(spreadsheet.getSheetByName(SHEETS.employees), HEADERS.employees);
   removeLegacyPasswordColumn_(spreadsheet.getSheetByName(SHEETS.employees));
   seedConfig_(spreadsheet.getSheetByName(SHEETS.config));
   installFinancePaymentTrigger_();
-  return 'Sheets are ready. Add employees, grade rates, and HR_EMAIL in the workbook before opening submissions.';
+  return 'Sheets are ready. Add employees, grade rates, and HR_EMAIL before opening submissions. Set Role to Admin for at least one active employee, and Account Officer for staff who record reimbursements. A blank Role is treated as Employee.';
 }
 
 function sendLoginCode(employeeId) {
@@ -131,6 +133,7 @@ function verifyLoginCode(employeeId, verificationCode) {
     lock.releaseLock();
   }
 
+  ensureEmployeeHeaders_();
   const employee = findActiveEmployeeById_(normalizedId);
   if (!employee) throw new Error('This employee account is unavailable. Contact HR.');
   const sessionToken = Utilities.getUuid();
@@ -165,11 +168,19 @@ function getManagerClaimOptions(sessionToken) {
   };
 }
 
-function getEligibility(sessionToken, airtime, data, targetEmployeeId) {
+function getEligibility(sessionToken, airtime, data, targetEmployeeId, period) {
   const context = resolveClaimEmployee_(sessionToken, targetEmployeeId);
+  const periodStatus = describeClaimPeriod_(context.employee['Employee ID'], period);
+  if (periodStatus.blocked) {
+    return {
+      employee: publicEmployee_(context.employee),
+      eligibility: { configured: false, eligible: false, message: periodStatus.message },
+      periodStatus: periodStatus
+    };
+  }
   const amounts = validateAmounts_(airtime, data);
   const result = eligibilityFor_(context.employee, amounts.airtime, amounts.data);
-  return { employee: publicEmployee_(context.employee), eligibility: result };
+  return { employee: publicEmployee_(context.employee), eligibility: result, periodStatus: periodStatus };
 }
 
 function submitClaim(form) {
@@ -205,11 +216,9 @@ function submitClaim(form) {
   let evidenceFile;
   try {
     const table = readTable_(SHEETS.claims);
-    const duplicate = table.rows.some(function (row) {
-      return String(row['Employee ID']).trim().toUpperCase() === String(employee['Employee ID']).trim().toUpperCase() &&
-        String(row['Claim Period']).trim() === period && ACTIVE_CLAIM_STATUSES.indexOf(String(row['Overall Status'])) >= 0;
-    });
-    if (duplicate) throw new Error('An active claim already exists for this period.');
+    const timezone = table.sheet.getParent().getSpreadsheetTimeZone();
+    const blockingClaim = findBlockingClaim_(table.rows, employee['Employee ID'], period, timezone);
+    if (blockingClaim) throw new Error(blockingClaimMessage_(blockingClaim, timezone));
 
     const total = amounts.airtime + amounts.data;
     const claimId = Utilities.getUuid();
@@ -256,6 +265,8 @@ function submitClaim(form) {
       'Evidence URL': evidenceFile.getUrl()
     };
     table.sheet.appendRow(table.headers.map(function (header) { return claimRecord[header] === undefined ? '' : claimRecord[header]; }));
+    const periodColumn = table.headers.indexOf('Claim Period') + 1;
+    if (periodColumn > 0) table.sheet.getRange(table.sheet.getLastRow(), periodColumn).setNumberFormat('@').setValue(period);
   } catch (error) {
       if (evidenceFile) {
         try {
@@ -383,24 +394,139 @@ function submitDecision(token, action, comment) {
 function onFinanceStatusEdit(e) {
   if (!e || !e.range || e.range.getNumRows() !== 1 || e.range.getNumColumns() !== 1) return;
   const sheet = e.range.getSheet();
-  if (sheet.getName() !== SHEETS.claims || e.range.getRow() < 2) return;
-  const headers = HEADERS.claims;
+  if (sheet.getName() !== SHEETS.claims || e.range.getRow() < 2 || sheet.getLastColumn() < 1) return;
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (header) { return String(header || ''); });
   const financeColumn = headers.indexOf('Finance Status') + 1;
-  if (e.range.getColumn() !== financeColumn || String(e.value || '').trim().toLowerCase() !== 'paid') return;
+  if (financeColumn < 1 || e.range.getColumn() !== financeColumn || String(e.value || '').trim().toLowerCase() !== 'paid') return;
 
   const rowNumber = e.range.getRow();
   const row = rowObject_(headers, sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0]);
   if (String(row['Overall Status']) === 'Paid') return;
   if (String(row['Overall Status']) !== 'Verified - Awaiting Payment') {
     e.range.setValue(e.oldValue || '');
-    e.source.toast('HR must verify this claim before Finance can mark it paid.', 'Payment status not updated', 6);
+    e.source.toast('HR must verify this claim before it can be marked reimbursed.', 'Payment status not updated', 6);
     return;
   }
-  const now = new Date();
-  sheet.getRange(rowNumber, headers.indexOf('Payment Date') + 1).setValue(row['Payment Date'] || now);
-  sheet.getRange(rowNumber, headers.indexOf('Overall Status') + 1).setValue('Paid');
-  if (!sendEmployeeEmail_(row['Employee Email'], 'Claim paid', 'Finance marked claim ' + row['Claim ID'] + ' as paid.')) {
-    recordNotificationFailure_(row['Claim ID'], row['Employee Email'], 'Employee payment notification could not be delivered.');
+  row['Finance Status'] = 'Paid';
+  row['Payment Date'] = row['Payment Date'] || new Date();
+  row['Overall Status'] = 'Paid';
+  if (headers.indexOf('Reimbursed By Name') >= 0 && !String(row['Reimbursed By Name'] || '').trim()) {
+    row['Reimbursed By Name'] = 'Recorded in Claims Tracker';
+  }
+  sheet.getRange(rowNumber, 1, 1, headers.length).setValues([headers.map(function (header) {
+    return row[header] === undefined || row[header] === null ? '' : row[header];
+  })]);
+  if (!sendEmployeeEmail_(row['Employee Email'], 'Claim reimbursed', 'Your claim ' + row['Claim ID'] + ' was marked reimbursed.')) {
+    recordNotificationFailure_(row['Claim ID'], row['Employee Email'], 'Employee reimbursement notification could not be delivered.');
+  }
+}
+
+function listReimbursementQueue(sessionToken) {
+  requireRole_(sessionToken, ['Account Officer', 'Admin']);
+  ensureClaimsHeaders_();
+  const table = readTable_(SHEETS.claims);
+  const timezone = table.sheet.getParent().getSpreadsheetTimeZone();
+  const awaiting = [];
+  const reimbursed = [];
+  table.rows.forEach(function (row) {
+    if (!String(row['Claim ID'] || '').trim()) return;
+    const summary = reimbursementSummary_(row, timezone);
+    const financeStatus = String(row['Finance Status'] || '').trim().toLowerCase();
+    if (summary.overallStatus === 'Verified - Awaiting Payment' && financeStatus !== 'paid') awaiting.push(summary);
+    else if (summary.overallStatus === 'Paid' || financeStatus === 'paid') reimbursed.push(summary);
+  });
+  awaiting.sort(function (left, right) { return String(left.submittedAt).localeCompare(String(right.submittedAt)); });
+  reimbursed.sort(function (left, right) { return String(right.paymentDate).localeCompare(String(left.paymentDate)); });
+  return { awaiting: awaiting, reimbursed: reimbursed.slice(0, 40) };
+}
+
+function markClaimReimbursed(sessionToken, claimId, paymentDate, note) {
+  const officer = requireRole_(sessionToken, ['Account Officer', 'Admin']);
+  const claimKey = String(claimId || '').trim();
+  if (!claimKey) throw new Error('Choose a claim to mark reimbursed.');
+  const reimbursementNote = String(note || '').trim();
+  if (reimbursementNote.length > 500) throw new Error('The reimbursement note must be 500 characters or fewer.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  let row;
+  try {
+    ensureClaimsHeaders_();
+    const table = readTable_(SHEETS.claims);
+    const timezone = table.sheet.getParent().getSpreadsheetTimeZone();
+    const parsedDate = parsePaymentDate_(paymentDate, timezone);
+    const index = table.rows.findIndex(function (item) { return String(item['Claim ID'] || '').trim() === claimKey; });
+    if (index < 0) throw new Error('That claim was not found.');
+    row = recordReimbursement_(table, index, officer, parsedDate, reimbursementNote);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+
+  const notified = sendEmployeeEmail_(row['Employee Email'], 'Claim reimbursed', 'Your claim ' + row['Claim ID'] + ' was marked reimbursed by ' + officer['Full Name'] + '.');
+  if (!notified) recordNotificationFailure_(row['Claim ID'], row['Employee Email'], 'Employee reimbursement notification could not be delivered.');
+  return { claimId: row['Claim ID'], status: 'Paid', notificationSent: notified };
+}
+
+function openClaimReceipt(sessionToken, claimId) {
+  const officer = requireRole_(sessionToken, ['Account Officer', 'Admin']);
+  const claimKey = String(claimId || '').trim();
+  if (!claimKey) throw new Error('Choose a claim to open its receipt.');
+  const table = readTable_(SHEETS.claims);
+  const row = table.rows.find(function (item) { return String(item['Claim ID'] || '').trim() === claimKey; });
+  if (!row) throw new Error('That claim was not found.');
+  const fileId = String(row['Evidence File ID'] || '').trim();
+  if (!fileId) throw new Error('This claim has no receipt on file.');
+  const file = DriveApp.getFileById(fileId);
+  return { url: shareReceiptWithOfficer_(file, officer) };
+}
+
+function listRegisteredUsers(sessionToken) {
+  requireRole_(sessionToken, ['Admin']);
+  ensureEmployeeHeaders_();
+  const table = readTable_(SHEETS.employees);
+  const users = table.rows.filter(function (row) {
+    return String(row['Employee ID'] || '').trim();
+  }).map(function (row) {
+    return {
+      employeeId: String(row['Employee ID'] || ''),
+      name: String(row['Full Name'] || ''),
+      email: String(row.Email || ''),
+      department: String(row.Department || ''),
+      active: String(row.Active || '').trim().toUpperCase() === 'Y',
+      role: normalizeRole_(row.Role)
+    };
+  }).sort(function (left, right) { return left.name.localeCompare(right.name); });
+  return { users: users };
+}
+
+function setRegisteredUserRole(sessionToken, employeeId, role) {
+  const admin = requireRole_(sessionToken, ['Admin']);
+  const nextRole = canonicalRole_(role);
+  if (!nextRole) throw new Error('Choose Employee, Account Officer, or Admin.');
+  const targetId = normalizeEmployeeId_(employeeId);
+  if (!targetId) throw new Error('Choose a registered employee.');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    ensureEmployeeHeaders_();
+    const table = readTable_(SHEETS.employees);
+    const roleColumn = table.headers.indexOf('Role') + 1;
+    if (roleColumn < 1) throw new Error('The Role column is missing. Run setupApplication().');
+    const index = table.rows.findIndex(function (row) { return normalizeEmployeeId_(row['Employee ID']) === targetId; });
+    if (index < 0) throw new Error('That employee is not on the Employee Master.');
+    const target = table.rows[index];
+    if (normalizeRole_(target.Role) === 'Admin' && nextRole !== 'Admin' && String(target.Active || '').trim().toUpperCase() === 'Y') {
+      const remainingAdmins = table.rows.filter(function (row, rowIndex) {
+        return rowIndex !== index && normalizeRole_(row.Role) === 'Admin' && String(row.Active || '').trim().toUpperCase() === 'Y';
+      }).length;
+      if (remainingAdmins < 1) throw new Error('Keep at least one active Admin.');
+    }
+    table.sheet.getRange(index + 2, roleColumn).setValue(nextRole);
+    return { employeeId: String(target['Employee ID'] || ''), role: nextRole, actorRole: normalizeEmployeeId_(admin['Employee ID']) === targetId ? nextRole : normalizeRole_(admin.Role) };
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -413,6 +539,13 @@ function requireEmployee_(sessionToken) {
     return String(row['Employee ID'] || '').trim().toUpperCase() === id && String(row.Active || '').trim().toUpperCase() === 'Y';
   });
   if (!employee) throw new Error('Employee account is unavailable. Contact HR.');
+  return employee;
+}
+
+function requireRole_(sessionToken, roles) {
+  const employee = requireEmployee_(sessionToken);
+  const role = normalizeRole_(employee.Role);
+  if (roles.indexOf(role) < 0) throw new Error('Your account is not allowed to do that.');
   return employee;
 }
 
@@ -783,7 +916,7 @@ function publicEmployee_(employee) {
   return {
     employeeId: employee['Employee ID'], name: employee['Full Name'], email: employee.Email,
     department: employee.Department, grade: employee.Grade, designation: employee.Designation,
-    supervisor: employee['Supervisor Name']
+    supervisor: employee['Supervisor Name'], role: normalizeRole_(employee.Role)
   };
 }
 
@@ -820,6 +953,158 @@ function normalizeEmail_(value) {
 
 function normalizeEmployeeId_(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function canonicalRole_(value) {
+  const compact = String(value || '').trim().toLowerCase().replace(/[^a-z]/g, '');
+  if (compact === 'admin' || compact === 'administrator') return 'Admin';
+  if (compact === 'accountofficer' || compact === 'accountsofficers') return 'Account Officer';
+  if (compact === 'employee') return 'Employee';
+  return '';
+}
+
+function normalizeRole_(value) {
+  return canonicalRole_(value) || 'Employee';
+}
+
+function ensureEmployeeHeaders_() {
+  ensureHeaders_(getSpreadsheet_().getSheetByName(SHEETS.employees), HEADERS.employees);
+}
+
+function ensureClaimsHeaders_() {
+  ensureHeaders_(getSpreadsheet_().getSheetByName(SHEETS.claims), HEADERS.claims);
+}
+
+function formatSheetDate_(value, timezone) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, timezone || Session.getScriptTimeZone() || 'Africa/Lagos', 'yyyy-MM-dd');
+  }
+  const match = String(value == null ? '' : value).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+}
+
+function parsePaymentDate_(value, timezone) {
+  const text = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error('Enter the date the claim was reimbursed.');
+  const zone = timezone || Session.getScriptTimeZone() || 'Africa/Lagos';
+  const today = Utilities.formatDate(new Date(), zone, 'yyyy-MM-dd');
+  if (text > today) throw new Error('The reimbursement date cannot be in the future.');
+  return Utilities.parseDate(text, zone, 'yyyy-MM-dd');
+}
+
+function reimbursementSummary_(row, timezone) {
+  return {
+    claimId: String(row['Claim ID'] || ''),
+    employeeName: String(row['Employee Name'] || ''),
+    employeeId: String(row['Employee ID'] || ''),
+    department: String(row.Department || ''),
+    grade: String(row.Grade || ''),
+    periodLabel: claimPeriodLabel_(row['Claim Period'], timezone),
+    submittedAt: formatSheetDate_(row['Submitted At'], timezone),
+    airtime: Number(row['Airtime Claimed (NGN)'] || 0),
+    data: Number(row['Data Claimed (NGN)'] || 0),
+    total: Number(row['Total Claimed (NGN)'] || 0),
+    recommended: row['Amount Recommended (NGN)'],
+    overallStatus: String(row['Overall Status'] || ''),
+    paymentDate: formatSheetDate_(row['Payment Date'], timezone),
+    reimbursedBy: String(row['Reimbursed By Name'] || ''),
+    note: String(row['Reimbursement Note'] || ''),
+    hasReceipt: !!String(row['Evidence File ID'] || '').trim()
+  };
+}
+
+function writeClaimRow_(table, rowIndex) {
+  const row = table.rows[rowIndex];
+  table.sheet.getRange(rowIndex + 2, 1, 1, table.headers.length).setValues([table.headers.map(function (header) {
+    return row[header] === undefined || row[header] === null ? '' : row[header];
+  })]);
+}
+
+function recordReimbursement_(table, rowIndex, officer, paymentDate, note) {
+  const row = table.rows[rowIndex];
+  const status = String(row['Overall Status'] || '').trim();
+  if (status === 'Paid' || String(row['Finance Status'] || '').trim().toLowerCase() === 'paid') {
+    throw new Error('This claim is already marked reimbursed.');
+  }
+  if (status !== 'Verified - Awaiting Payment') throw new Error('Only a claim that HR has verified can be marked reimbursed.');
+  row['Finance Status'] = 'Paid';
+  row['Payment Date'] = paymentDate;
+  row['Overall Status'] = 'Paid';
+  row['Reimbursed By Employee ID'] = officer['Employee ID'];
+  row['Reimbursed By Name'] = officer['Full Name'];
+  row['Reimbursement Note'] = note || '';
+  writeClaimRow_(table, rowIndex);
+  const paymentColumn = table.headers.indexOf('Payment Date') + 1;
+  if (paymentColumn > 0) table.sheet.getRange(rowIndex + 2, paymentColumn).setNumberFormat('yyyy-mm-dd');
+  return row;
+}
+
+function shareReceiptWithOfficer_(file, officer) {
+  const officerEmail = normalizeEmail_(officer.Email);
+  if (!isCompanyEmail_(officerEmail)) {
+    throw new Error('Your company email must be an @indorama.com address before a receipt can be shared with you.');
+  }
+  const ownerEmail = normalizeEmail_(Session.getEffectiveUser().getEmail());
+  if (officerEmail !== ownerEmail) {
+    const people = file.getViewers().concat(file.getEditors());
+    const alreadyShared = people.some(function (user) { return normalizeEmail_(user.getEmail()) === officerEmail; });
+    if (!alreadyShared) file.addViewer(officerEmail);
+  }
+  return file.getUrl();
+}
+
+function claimPeriodKey_(value, timezone) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, timezone || Session.getScriptTimeZone() || 'Africa/Lagos', 'yyyy-MM');
+  }
+  const text = String(value == null ? '' : value).trim();
+  const match = text.match(/^(\d{4})-(0[1-9]|1[0-2])(?:-\d{1,2})?(?:[T\s].*)?$/);
+  if (match) return match[1] + '-' + match[2];
+  return text;
+}
+
+function claimPeriodLabel_(value, timezone) {
+  const key = claimPeriodKey_(value, timezone);
+  const match = key.match(/^(\d{4})-(0[1-9]|1[0-2])$/);
+  if (!match) return key || 'this month';
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return months[Number(match[2]) - 1] + ' ' + match[1];
+}
+
+function isResubmittableClaimStatus_(status) {
+  return RESUBMITTABLE_CLAIM_STATUSES.indexOf(String(status || '').trim().toLowerCase()) >= 0;
+}
+
+function findBlockingClaim_(rows, employeeId, period, timezone) {
+  const employeeKey = normalizeEmployeeId_(employeeId);
+  const periodKey = claimPeriodKey_(period, timezone);
+  if (!employeeKey || !/^\d{4}-(0[1-9]|1[0-2])$/.test(periodKey)) return null;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (normalizeEmployeeId_(row['Employee ID']) !== employeeKey) continue;
+    if (claimPeriodKey_(row['Claim Period'], timezone) !== periodKey) continue;
+    if (isResubmittableClaimStatus_(row['Overall Status'])) continue;
+    return row;
+  }
+  return null;
+}
+
+function blockingClaimMessage_(row, timezone) {
+  const status = String(row['Overall Status'] || '').trim() || 'still open';
+  return 'A claim for ' + claimPeriodLabel_(row['Claim Period'], timezone) + ' is already ' + status +
+    '. Another claim for this month is allowed only when the earlier claim was declined or rejected.';
+}
+
+function describeClaimPeriod_(employeeId, period) {
+  const normalized = String(period || '').trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(normalized)) {
+    return { blocked: true, message: 'Select a valid claim period.' };
+  }
+  const table = readTable_(SHEETS.claims);
+  const timezone = table.sheet.getParent().getSpreadsheetTimeZone();
+  const blockingClaim = findBlockingClaim_(table.rows, employeeId, normalized, timezone);
+  if (!blockingClaim) return { blocked: false, message: '' };
+  return { blocked: true, message: blockingClaimMessage_(blockingClaim, timezone) };
 }
 
 function isCompanyEmail_(email) {

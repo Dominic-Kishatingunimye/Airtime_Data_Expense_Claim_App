@@ -6,13 +6,13 @@
 **Status:** Draft for business review  
 **Business owner:** To be confirmed  
 **System owner:** HR / Apps Script administrator  
-**Last updated:** 2026-10-02
+**Last updated:** 2026-10-15
 
 ## 1. Executive Summary
 
 The Airtime and Internet Data Expense Claim Application replaces email, paper, and ad-hoc spreadsheet submissions with a Google Apps Script web app backed by a Google spreadsheet. Employees authenticate using their Employee ID and a one-time code sent to the company email recorded in Employee Master. The app checks grade-based rates, creates one tracker row per claim, and routes the request for approval.
 
-Normal employee claims follow the Reporting Supervisor (HOD) to HR workflow. Qualified managers (Grade V or above and designated Team Leader or HOD) may submit on behalf of an active direct report. Such claims identify both claimant and submitter, bypass the supervisor approval step, and go directly to HR. Finance records payment in the tracker after HR verification.
+Normal employee claims follow the Reporting Supervisor (HOD) to HR workflow. Qualified managers (Grade V or above and designated Team Leader or HOD) may submit on behalf of an active direct report. Such claims identify both claimant and submitter, bypass the supervisor approval step, and go directly to HR. A registered account officer records reimbursement in the app after HR verification. An admin assigns the Employee, Account Officer, and Admin roles.
 
 ## 2. Business Objectives
 
@@ -36,7 +36,7 @@ Normal employee claims follow the Reporting Supervisor (HOD) to HR workflow. Qua
 - Manager submission on behalf of an active, directly reporting employee, subject to Grade V+ and Team Leader/HOD designation.
 - Single-use tokenized email decisions without requiring the approver to sign in.
 - A single Claims Tracker row created at submission and updated at each stage.
-- Finance payment status and date entered in the tracker.
+- Account-officer reimbursement of HR-verified claims, recorded on the tracker.
 - Employee and submitting-manager notifications where applicable.
 
 ### 3.2 Out of Scope
@@ -56,8 +56,9 @@ Normal employee claims follow the Reporting Supervisor (HOD) to HR workflow. Qua
 | Reporting Supervisor (HOD) | Supervisor mapped in Employee Master | Approve or decline a regular employee claim and optionally comment. |
 | Team Leader / HOD submitting on behalf | Active employee, Grade V or above, and Designation identifies Team Leader or HOD | Select an active direct report and submit that employee's claim directly to HR. The manager is recorded as submitter, not claimant. |
 | HR Verifier | HR mailbox configured in App Config | Verify or reject supervisor-approved or manager-submitted claims and optionally comment. |
-| Finance | Authorized Claims Tracker editor | Set Finance Status to Paid and record or confirm Payment Date after HR verification. |
-| Admin / HR system owner | Maintains master and configuration sheets | Maintain employee records, reporting mappings, approved rates, HR routing, and operational access. |
+| Account Officer | Active employee whose Employee Master Role is Account Officer | Sign in and mark HR-verified claims as reimbursed. The tracker records Finance Status, Payment Date, Overall Status, and the officer who recorded it. |
+| Admin | Active employee whose Employee Master Role is Admin | Assign Employee, Account Officer, and Admin roles. May also record reimbursement. |
+| Finance sheet editor | Authorized Claims Tracker editor | May still set Finance Status to Paid directly in the tracker after HR verification. The installed edit trigger completes the paid status. |
 
 ## 5. Process Overview
 
@@ -73,7 +74,7 @@ Normal employee claims follow the Reporting Supervisor (HOD) to HR workflow. Qua
 8. Supervisor approves or declines using the single-use email link and may enter a comment.
 9. On approval, the same tracker row is updated and HR receives a Verify/Reject email. On decline, the flow ends.
 10. HR verifies or rejects. Verification sets the status to Verified - Awaiting Payment; rejection ends the flow.
-11. Finance records Paid and Payment Date in the tracker. The employee is notified.
+11. An account officer or admin marks the verified claim reimbursed in the app. Finance Status becomes Paid, Payment Date and Overall Status are recorded, and the employee is notified.
 
 ### 5.2 Manager Claim on Behalf of a Direct Report
 
@@ -98,10 +99,10 @@ If the qualified manager has no active direct reports mapped to their email, the
 7. A normal employee submission requires a valid Supervisor Email mapping. Missing mapping blocks submission.
 8. A manager may submit on behalf only if the manager is active, has Grade V or above, has a Designation identifying Team Leader or HOD, and the selected active employee's Supervisor Email matches the manager's registered email.
 9. Manager-on-behalf claims bypass HOD approval and route directly to HR. The employee remains claimant; the manager is recorded as submitter.
-10. One active claim is permitted per employee per claim period. The implementation currently treats Pending Supervisor, Pending HR, Verified - Awaiting Payment, Rejected, and Paid as blocking statuses; Declined is not blocking. HR-rejection resubmission policy requires business confirmation.
+10. One open claim is permitted per employee per claim period. Pending Supervisor, Pending HR, Verified - Awaiting Payment, and Paid block another submission for that month. A claim declined by the supervisor or rejected by HR does not block a new claim for the same month.
 11. Decision tokens are single-use and tied to a tracker row and stage. A reused token must not change the row again.
 12. Decisions update the existing claim row; they do not create a second row.
-13. Finance may mark a claim Paid only after HR verification. Payment Date is recorded in the same row.
+13. An account officer or admin may mark a claim reimbursed only after HR verification. Payment Date is recorded in the same row. Employees cannot record reimbursement. A blank Role is treated as Employee. At least one active Admin must remain.
 14. Claim write/decision outcomes remain recorded if email notification fails. The failure is reported or logged in Remarks for follow-up.
 
 ## 7. Functional Requirements
@@ -145,10 +146,12 @@ If the qualified manager has no active direct reports mapped to their email, the
 - HR shall receive a claim only after supervisor approval, or directly for an authorized manager-on-behalf submission.
 - HR shall be able to Verify or Reject and enter an optional comment.
 
-### BR7 - Finance Payment
+### BR7 - Reimbursement
 
-- Finance shall update Finance Status and Payment Date in the tracker after HR verification.
-- Marking a claim Paid shall update Overall Status in the same row and notify the employee.
+- An account officer or admin shall see HR-verified claims that are awaiting reimbursement.
+- Marking a claim reimbursed shall set Finance Status to Paid, record Payment Date, set Overall Status to Paid, and store the officer's name and employee ID.
+- The employee shall be notified. A claim that is not HR-verified, or is already reimbursed, shall not be changed.
+- An admin shall be able to assign Employee, Account Officer, and Admin on registered Employee Master rows.
 
 ### BR8 - Tracker and Audit
 
@@ -167,7 +170,7 @@ If the qualified manager has no active direct reports mapped to their email, the
 
 ### Employee Master
 
-One row per employee: Employee ID, Full Name, Email, Department, Grade, Designation, Supervisor Name, Supervisor Email, Active.
+One row per employee: Employee ID, Full Name, Email, Department, Grade, Designation, Supervisor Name, Supervisor Email, Active, Role. Role is Employee, Account Officer, or Admin. A blank Role means Employee.
 
 ### Grade Limits
 
@@ -175,7 +178,7 @@ One row per grade: Grade Code, Designation Examples, Airtime Limit (NGN), Data L
 
 ### Claims Tracker
 
-One row per claim: Claim ID, S/N, Submitted At, Employee ID, Employee Name, Employee Email, Department, Grade, Designation, Claim Period, Airtime Claimed (NGN), Data Claimed (NGN), Total Claimed (NGN), Approved Limit (NGN), Excess Claimed (NGN), Amount Recommended (NGN), Justification, Needs Manual Review, HOD Name, HOD Email, HOD Status, HOD Comment, HOD Decision Timestamp, HOD Token Hash, HOD Token Used, HR Status, HR Comment, HR Decision Timestamp, HR Token Hash, HR Token Used, Finance Status, Payment Date, Overall Status, Remarks, Submitted By Employee ID, Submitted By Name, Submitted By Email.
+One row per claim: Claim ID, S/N, Submitted At, Employee ID, Employee Name, Employee Email, Department, Grade, Designation, Claim Period, Airtime Claimed (NGN), Data Claimed (NGN), Total Claimed (NGN), Approved Limit (NGN), Excess Claimed (NGN), Amount Recommended (NGN), Justification, Needs Manual Review, HOD Name, HOD Email, HOD Status, HOD Comment, HOD Decision Timestamp, HOD Token Hash, HOD Token Used, HR Status, HR Comment, HR Decision Timestamp, HR Token Hash, HR Token Used, Finance Status, Payment Date, Overall Status, Remarks, Submitted By Employee ID, Submitted By Name, Submitted By Email, Evidence File ID, Evidence File Name, Evidence URL, Reimbursed By Employee ID, Reimbursed By Name, Reimbursement Note.
 
 ### App Config
 
@@ -202,7 +205,7 @@ Key/value configuration including HR_EMAIL and WEB_APP_URL.
 8. A non-manager, below-Grade-V employee, or manager selecting a non-report cannot submit on behalf.
 9. Clicking the email decision link opens a claim summary and comment form without recording a decision. Submitting the decision updates the same tracker row; a second click does not process it again.
 10. Supervisor approval triggers HR; supervisor decline ends the flow. Manager-on-behalf bypasses supervisor and goes directly to HR.
-11. Finance cannot mark a claim Paid before HR verification; after valid payment entry, status/date are recorded and the employee is notified.
+11. An employee cannot mark a claim reimbursed. An account officer or admin can mark only an HR-verified claim, which records Paid, the payment date, and the officer, then notifies the employee. A second attempt does not change the row. An admin can assign the three roles and cannot remove the last active admin.
 12. Notification failure does not erase a saved submission or decision and is visible for operational follow-up.
 
 ## 11. Risks, Assumptions, and Open Decisions
@@ -212,7 +215,7 @@ Key/value configuration including HR_EMAIL and WEB_APP_URL.
 - Junior I-II and Senior VII+ have historically lacked fixed caps and therefore require manual review unless the business approves rates.
 - The implementation's category-by-category cap enforcement should be confirmed by the business owner as the intended interpretation of the grade rate table.
 - The manager rule depends on Designation text identifying Team Leader/HOD and a recognizable Grade V+ value. HR must standardize these fields in Employee Master.
-- Current duplicate logic blocks resubmission after HR Rejected. Business owner must confirm whether HR-rejected claims should be resubmittable, distinct from supervisor-declined claims.
+- A supervisor decline or an HR rejection allows the employee to submit a new claim for the same month. Pending, verified, and paid claims do not.
 - No supervisor mapping blocks personal submission. A fallback HR/Admin notification process is not specified.
 - Claims Tracker retention and archival duration are undecided.
 - Email delivery and anonymous web-app access may be restricted by Google Workspace policy or Apps Script quotas.
